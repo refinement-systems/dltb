@@ -28,10 +28,11 @@ def add_pass_args(p: argparse.ArgumentParser) -> None:
     p.add_argument("--num-inference-steps", type=int, default=4,
                    help="Denoise schedule length (all models distilled for 1-4 steps)")
     p.add_argument("--guidance-scale", type=float, default=None,
-                   help="Override the model's default guidance scale. Experimental: "
-                        "klein takes guidance as an embedded conditioning signal "
-                        "(card default 1.0), so raising it may strengthen prompt "
-                        "adherence per pass.")
+                   help="Override the model's default guidance scale (per-model "
+                        "defaults; klein 1.0). NOTE: values > 1 are IGNORED by the "
+                        "step-distilled klein models (no CFG, no guidance embedding; "
+                        "diffusers warns per pass) -- dltb-klein warns once at "
+                        "startup. See NOTES.md.")
     p.add_argument("--prompt", default="",
                    help="Optional text prompt. A faithful description acts as a "
                         "semantic anchor (analogue of DLSS 5's artistic-direction "

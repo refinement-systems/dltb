@@ -19,10 +19,14 @@
 #                            as trained, the loop converges toward "maximally
 #                            weathered" instead of melting - directed attractor
 #                            vs. undirected collapse.
-#   3. Guidance probes     : the mild prompt at --guidance-scale 2.0 / 4.0.
-#                            Experimental: klein's guidance is an embedded
-#                            conditioning signal (card default 1.0); higher values
-#                            may strengthen prompt adherence per pass.
+#   3. Steps probes        : the mild prompt at --num-inference-steps 2 / 8
+#                            (bracketing the klein card default of 4, which the
+#                            ladder legs already run). Steps are the one direct
+#                            per-pass edit-intensity knob that actually reaches
+#                            klein -- real scheduler steps, no distillation
+#                            short-circuit. (Supersedes the guidance probes,
+#                            removed 2026-09-13: --guidance-scale > 1 is provably
+#                            inert for step-wise distilled klein; see NOTES.md.)
 #
 # Each prompt gets its own --output-dir subtree (output/<model>/prompt-<slug>/),
 # because dltb-klein's directory tag encodes only mode/blend/tails - without
@@ -42,7 +46,8 @@
 #   TAIL_FRAMES   frames per tail          (default 60; 0 = no tails)
 #   TAIL_MODES    tail scenario list       (default freeze; "freeze,free" etc.)
 #   SAVE_EVERY    save every Nth frame     (default 10)
-#   GUIDANCES     guidance probe values    (default "2.0 4.0"; empty = skip)
+#   STEPS         steps-probe values       (default "2 8", bracketing the default 4;
+#                 empty = skip the probe)
 #   EXTRA_ARGS    extra flags, word-split, appended to every run
 #   DRY_RUN=1     print commands without executing anything
 #   SKIP_GPU_CHECK=1  bypass the CUDA preflight
@@ -65,7 +70,7 @@ MAX_FRAMES="${MAX_FRAMES-300}"
 TAIL_FRAMES="${TAIL_FRAMES:-60}"
 TAIL_MODES="${TAIL_MODES:-freeze}"
 SAVE_EVERY="${SAVE_EVERY:-10}"
-GUIDANCES="${GUIDANCES-2.0 4.0}"
+STEPS="${STEPS-2 8}"
 EXTRA_ARGS="${EXTRA_ARGS:-}"
 DRY_RUN="${DRY_RUN:-0}"
 
@@ -80,9 +85,9 @@ PROMPT_TABLE=(
     "weathering|add more weathering, moss and water stains to the stone"
 )
 
-# Guidance probes reuse the mild-enhancement prompt.
-GUIDANCE_SLUG="enhance-slight"
-GUIDANCE_PROMPT="slightly enhance the fine details"
+# Steps probes reuse the mild-enhancement prompt.
+PROBE_SLUG="enhance-slight"
+PROBE_PROMPT="slightly enhance the fine details"
 
 # -------------------------------------------------------------- preflight ----
 if [[ "$DRY_RUN" != "1" ]]; then
@@ -129,7 +134,7 @@ run() {
 }
 
 log "sweep-klein: model=$MODEL clip=$CLIP blend=$BLEND"
-log "sweep-klein: max_frames=${MAX_FRAMES:-<all>} tail=${TAIL_FRAMES}x${TAIL_MODES} guidances='${GUIDANCES:-<none>}'"
+log "sweep-klein: max_frames=${MAX_FRAMES:-<all>} tail=${TAIL_FRAMES}x${TAIL_MODES} steps='${STEPS:-<none>}'"
 log "sweep-klein: log=$LOG"
 
 # ------------------------------------------------------- 1+2. prompt ladder ----
@@ -145,14 +150,14 @@ for entry in "${PROMPT_TABLE[@]}"; do
     run "${args[@]}" ${EXTRA_ARGS:+$EXTRA_ARGS}
 done
 
-# ------------------------------------------------------- 3. guidance probe ----
-if [[ -n "${GUIDANCES:-}" ]]; then
-    for G in $GUIDANCES; do
+# --------------------------------------------------------- 3. steps probe ----
+if [[ -n "${STEPS:-}" ]]; then
+    for N in $STEPS; do
         log ""
-        log "########## guidance probe: '$GUIDANCE_SLUG' @ guidance=$G ##########"
+        log "########## steps probe: '$PROBE_SLUG' @ num-inference-steps=$N ##########"
         run ${common[@]+"${common[@]}"} \
-            --prompt "$GUIDANCE_PROMPT" --guidance-scale "$G" \
-            --output-dir "output/$MODEL/guidance$G" ${EXTRA_ARGS:+$EXTRA_ARGS}
+            --prompt "$PROBE_PROMPT" --num-inference-steps "$N" \
+            --output-dir "output/$MODEL/steps$N" ${EXTRA_ARGS:+$EXTRA_ARGS}
     done
 fi
 

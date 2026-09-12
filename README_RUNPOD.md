@@ -231,9 +231,10 @@ Useful `sweep.sh` env overrides: `MODELS`, `BLENDS`, `BASELINE`, `MAX_FRAMES`,
 
 Klein regime (`scripts/sweep-klein.sh`, drives `dltb-klein`): `MODEL`
 (default `flux2-klein-9b`; `4b` is ungated), `BLEND` (default `0.1`),
-`GUIDANCES` (default "2.0 4.0"), plus the shared `CLIP`/`MAX_FRAMES`/
-`TAIL_FRAMES`/`TAIL_MODES`/`SAVE_EVERY`/`EXTRA_ARGS`/`DRY_RUN`/
-`SKIP_GPU_CHECK`. Single-model, so no hf-cache eviction between runs.
+`STEPS` (default "2 8", bracketing the default 4), plus the shared
+`CLIP`/`MAX_FRAMES`/`TAIL_FRAMES`/`TAIL_MODES`/`SAVE_EVERY`/`EXTRA_ARGS`/
+`DRY_RUN`/`SKIP_GPU_CHECK`. Single-model, so no hf-cache eviction between
+runs.
 
 ## 5. Model cache management
 

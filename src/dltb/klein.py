@@ -11,9 +11,14 @@ flux-schnell). Consequences for the loop:
   --prompt          the de-facto per-pass edit-strength knob: an empty or
                     neutral prompt preserves, an edit instruction compounds
                     every pass (scripts/sweep-klein.sh walks that ladder)
-  --guidance-scale  klein takes guidance as an embedded conditioning signal
-                    (model card default 1.0); raising it may strengthen prompt
-                    adherence per pass. Experimental.
+  --num-inference-steps  real scheduler steps (klein card default 4) -- the
+                    direct per-pass edit-intensity knob alongside the prompt
+                    (sweep-klein probes 2 / 8 around it)
+
+  Guidance: --guidance-scale > 1 is INERT for klein -- step-wise distilled
+  models get no CFG (hard-disabled) and no guidance embedding; diffusers
+  warns and ignores the value. dltb-klein prints its own warning; see
+  NOTES.md, "FLUX.2 klein: --guidance-scale is inert".
 
 This runs the same loop topologies as dltb-continuous (anchored boil test /
 stateful blend with optical-flow reprojection / failure tails), restricted to
@@ -84,6 +89,15 @@ def parse_args(argv: list[str] | None = None) -> argparse.Namespace:
 
 
 def run(args: argparse.Namespace) -> None:
+    if args.guidance_scale is not None and args.guidance_scale > 1.0:
+        print(
+            f"dltb-klein: WARNING: --guidance-scale {args.guidance_scale:g} > 1 is "
+            "ignored by step-wise distilled klein models (CFG is hard-disabled "
+            "and there is no guidance embedding); the run would be identical to "
+            "the default-guidance one. See NOTES.md, 'FLUX.2 klein: "
+            "--guidance-scale is inert'.",
+            flush=True,
+        )
     # Identical loop to dltb-continuous; only the argument surface above
     # differs (model restriction, klein blend default, guidance emphasis).
     run_continuous(args)

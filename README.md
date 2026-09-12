@@ -28,8 +28,10 @@ Three scripts share the library code in `src/dltb/` (`models`, `imaging`,
   (`flux2-klein-4b`, ungated, default / `flux2-klein-9b`, gated). Klein is a
   reference-image editor: no `--strength`, per-pass change scales ~linearly
   with the blend (default `0.1`, far below the img2img models), and the prompt
-  is the de-facto per-pass edit-strength knob. `scripts/sweep-klein.sh` walks
-  its prompt ladder and `--guidance-scale` probes.
+  is the de-facto per-pass edit-strength knob (`--num-inference-steps` is the
+  other). `scripts/sweep-klein.sh` walks its prompt ladder and steps probes
+  (guidance is inert for klein — CFG is disabled and there is no guidance
+  embedding in the distilled checkpoints).
 
 ## Models
 

@@ -229,10 +229,80 @@ never reaches the model, via three independent points:
   is a partial duplicate of `prompt-enhance-slight/` — delete it (and
   `guidance4.0/` if it ever started).
 
-**Repo follow-ups (not yet applied):** default `GUIDANCES` to empty in
-`sweep-klein.sh` (+ header note); make `dltb-klein` refuse or warn on
-`--guidance-scale > 1`; candidate replacement axis that *does* reach klein:
-`--num-inference-steps` (e.g. 2 / 4 / 8) as the per-pass edit-intensity probe;
-optional 2-frame hash A/B (`--max-frames 2`, with vs without the flag) if an
-empirical confirmation is ever wanted on a future diffusers.
+**Follow-ups applied 2026-09-13:** the guidance leg of `sweep-klein.sh` is
+replaced by a `--num-inference-steps` probe (`STEPS="2 8"`, bracketing the
+default 4 that the ladder legs already run) — steps are the one remaining
+direct per-pass edit-intensity knob that actually reaches klein. `dltb-klein`
+now prints a one-time warning when `--guidance-scale > 1` is passed (warn,
+not refuse, so a future diffusers that implements a real guidance path does
+not break the tool). The 2-frame hash A/B remains optional and only worth
+doing after a diffusers upgrade. Next-experiment sketch for klein's control
+problem: dual-reference conditioning, see the last section.
+
+## Sketch: klein dual-reference conditioning (`--conditioning dual-ref`)
+
+**Status: DESIGN ONLY (2026-09-13), not implemented.** The candidate fix for
+klein's control problem, replacing the pixel-blend proxy.
+
+**Why:** klein's calibration trouble (too weak at blend 0.6–0.8, "melting" at
+0.1 — see the calibration section) is plausibly an artifact of pixel-blending
+two frames into ONE reference image. Klein is trained as a (multi-)reference
+editor, and the pipeline natively accepts a LIST of reference images:
+verified in diffusers 0.40.0 `Flux2KleinPipeline.__call__` (step 4 — each
+image is preprocessed, downscaled to ≤ 1 MP if needed, packed, and the packed
+latents are `torch.cat([latents, image_latents], dim=1)`-ed on the SEQUENCE
+axis; batch size comes from the prompt, not the image count). So the carried
+state and the fresh frame can both be conditioning inputs:
+
+    blend  (today) : P_n = f(image = (1-a)*R(P_{n-1}) + a*N_n)
+    dual-ref (new) : P_n = f(image = [R(P_{n-1}), N_n])    # two references
+
+**Design:**
+
+- CLI in `dltb-klein`: `--conditioning {blend,dual-ref}` (default `blend`
+  until validated). `--anchor-blend` applies to `blend` only; dual-ref run
+  tag: `<stem>_dualref[-norepro]_tails…` (no blend component).
+- `imaging.run_pass` needs NO change — it forwards `image=source`, and a
+  list of two PIL images flows straight through. `--width/--height` still
+  set the output canvas; references are resized/packed per-image by the
+  pipeline (our 768² frames are under the 1 MP auto-resize cap).
+- `klein.py` needs its own stateful loop for dual-ref (it currently delegates
+  to `continuous.run`, whose blend is baked in). Either fork the loop, or —
+  cleaner — generalize `continuous.run` to accept a
+  `condition(carried, new_frame) -> source` callable, with the current
+  blend/reproject logic as the default implementation.
+- Reprojection: probably UNNECESSARY in dual-ref (the fresh frame is an
+  explicit reference; the model aligns content, not pixel coordinates) — but
+  keep it probeable: warping the carried reference may still help temporal
+  stability. A/B `--reproject` / `--no-reproject`.
+- Reference order is a real variable: `[P, N]` vs `[N, P]` — likely encodes
+  "primary vs target"; cheap 2-frame A/Bs answer it empirically.
+- Tails: freeze = `[P, last_source]`; free = `[P]` alone (single-reference
+  regeneration from state — the pure buffer-echo case); black = `[P, black]`.
+
+**Open questions / risks:**
+
+- Token budget: each 768² reference packs to ~2.3k sequence tokens
+  (2×2-packed VAE latents), so two references + text is a modest sequence —
+  but measure the real VRAM/speed delta with the README_RUNPOD VRAM-probe
+  pattern before scheduling runs.
+- Does klein weight multiple references equally, or is there an implicit
+  "first = primary" convention? (The order A/B above answers this.)
+- Interaction with the steps probe: re-run the steps axis under dual-ref —
+  intensity may interact with conditioning strength.
+
+**Suggested first runs (once implemented):**
+
+    uv run dltb-klein --model flux2-klein-4b --input input/video_cropped.mp4 \
+        --conditioning dual-ref --prompt "slightly enhance the fine details" \
+        --max-frames 30 --tail-frames 10 --save-every 1
+
+    # order A/B (2 frames each, compare): EXTRA_ARGS='--reproject' etc.
+    uv run dltb-klein --model flux2-klein-4b --input input/video_cropped.mp4 \
+        --conditioning dual-ref --ref-order state-first --max-frames 2
+
+Then add a `SMOKE_KLEIN=1` leg to `scripts/smoke.sh` (2 frames + 1 tail frame,
+flux2-klein-4b; off by default because of the 15 GB download) and a
+`CONDITIONING=dual-ref` toggle to `scripts/sweep-klein.sh` so the prompt
+ladder + steps probe re-run under the new conditioning.
 
