@@ -2,6 +2,38 @@
 
 Loose ends and follow-ups for imgiter.
 
+## Pod SSH: sshd is NOT running by default (2026-09-12)
+
+**Symptom:** every non-interactive access path fails while the pod itself is
+healthy — `runpodctl ssh info` ip:port gives *connection refused*, `exec`
+python tunnels over that same mapping, and croc relays are independently
+flaky (see 2026-09-12 transfer session: two dead relays, one Go panic in
+runpodctl's croc client, then a 10-min receive timeout on a third code).
+Only the console **web terminal** and the `ssh <pod-id>-<token>@ssh.runpod.io`
+gateway (PTY required — plain `ssh host cmd` is rejected with "Your SSH client
+doesn't support PTY"; scripted use needs a pty wrapper + fed commands) work.
+
+**Cause:** the pod image does not start sshd, and ships without host keys.
+
+**Fix (on the pod, via web terminal or the gateway):**
+
+```bash
+ssh-keygen -A          # generates /etc/ssh/ssh_host_* keys
+service ssh start      # "no hostkeys available -- exiting" without the line above
+ss -tlnp | grep :22
+```
+
+Then the `runpodctl ssh info` ip:port mapping answers. Second gotcha: the
+gateway authenticates against the *Runpod account*, the in-container sshd
+against `/root/.ssh/authorized_keys` — append the pubkey you connect with
+(`echo '<pubkey line>' >> /root/.ssh/authorized_keys`) or publickey auth
+still fails. With that, plain `rsync -P -e "ssh -i <key> -p <port>"` works
+and is the preferred bulk-transfer path (measured ~14 MB/s).
+
+**All of it is ephemeral** — host keys, authorized_keys, and the running sshd
+live on the container disk and vanish on stop/restart/recreate. Redo the
+two-liner after every pod start.
+
 ## macOS `._*` AppleDouble files in pod bundles
 
 **Status: fixed** (2026-09-12) in `scripts/bundle.sh`; `.gitignore` updated.
@@ -129,6 +161,15 @@ Printed once per SD/SDXL pipeline load: those model repos ship
 diffusers emits the license reminder. Benign, expected for `sd-turbo` and
 `sdxl-turbo`; it is not something the CLI can (or should) silence.
 
+### 8. `Guidance scale 2.0 is ignored for step-wise distilled models.`
+
+**Not benign — it means the run is a no-op duplicate.** Emitted once per pass
+by `Flux2KleinPipeline.check_inputs` whenever `guidance_scale > 1.0` with a
+klein checkpoint (360 lines per probe run in the sweep log). The value is
+dropped on the floor: see
+[FLUX.2 klein: --guidance-scale is inert](#flux2-klein---guidance-scale-is-inert-step-wise-distilled)
+below.
+
 ## flux2-klein-9b anchor-blend calibration (paused — needs a redesign)
 
 Context: for `sd-turbo` / `sdxl-turbo` / `flux-schnell`, the stateful sweep at
@@ -152,7 +193,46 @@ is a reference-image editor: no `--strength`, full 4-step regeneration).
 2026-09-21: that topology redesign is now in the tree as `dltb-klein` +
 `scripts/sweep-klein.sh` (prompt-as-strength ladder, guidance probes). The
 pre-restructure scripts they were derived from live under `reference/`.
+Later the same day the guidance-probe leg turned out to be inert for klein —
+see the next section.
 
 Preview settings for reference: stateful, `--reproject`,
 `--max-frames 30 --tail-frames 10 --tail-modes freeze`.
+
+## FLUX.2 klein: `--guidance-scale` is inert (step-wise distilled)
+
+**Found 2026-09-12, mid klein sweep:** `scripts/sweep-klein.sh` reached its
+guidance probes (`enhance-slight` at `--guidance-scale 2.0` / `4.0`) and the
+log flooded with one `Guidance scale 2.0 is ignored for step-wise distilled
+models.` warning per pass. Verified against the deployed diffusers (0.40.0,
+`diffusers/pipelines/flux2/pipeline_flux2_klein.py`) — the value provably
+never reaches the model, via three independent points:
+
+1. `check_inputs` warns exactly when `guidance_scale > 1.0 and
+   self.config.is_distilled` — klein checkpoints ship `is_distilled: true`.
+2. `do_classifier_free_guidance` is `self._guidance_scale > 1 and not
+   self.config.is_distilled` — always `False` for klein, and the CFG branch
+   (`noise_pred + scale * (noise_pred - neg_noise_pred)`) is the **only**
+   consumer of `guidance_scale` in the pipeline.
+3. Unlike FLUX.1-dev there is no guidance-embedding fallback: the transformer
+   is called with `guidance=None` unconditionally.
+
+**Consequences:**
+
+- A `--guidance-scale 2.0`/`4.0` run is bit-identical to the same-prompt
+  default-guidance run (fixed seed) — the probes were duplicates of the
+  `prompt-enhance-slight` run and measured nothing (~360 passes each).
+- `--negative-prompt` is equally inert (negative embeddings are only computed
+  under CFG).
+- The sweep was killed mid-probe; the meaningful legs (prompt ladder,
+  weathering attractor) were already on disk. `output/flux2-klein-9b/guidance2.0/`
+  is a partial duplicate of `prompt-enhance-slight/` — delete it (and
+  `guidance4.0/` if it ever started).
+
+**Repo follow-ups (not yet applied):** default `GUIDANCES` to empty in
+`sweep-klein.sh` (+ header note); make `dltb-klein` refuse or warn on
+`--guidance-scale > 1`; candidate replacement axis that *does* reach klein:
+`--num-inference-steps` (e.g. 2 / 4 / 8) as the per-pass edit-intensity probe;
+optional 2-frame hash A/B (`--max-frames 2`, with vs without the flag) if an
+empirical confirmation is ever wanted on a future diffusers.
 
