@@ -1,0 +1,24 @@
+# Python-generated files
+__pycache__/
+*.py[oc]
+build/
+dist/
+wheels/
+*.egg-info
+
+# Virtual environments
+.venv
+
+# Mac files
+.DS_Store
+._*
+
+# Pi configuration
+.pi/*
+
+# Packed bundles
+bundle/*
+
+# Downloaded files
+output/*
+

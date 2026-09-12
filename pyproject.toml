@@ -1,0 +1,31 @@
+[project]
+name = "dltb"
+version = "0.1.0"
+description = "Diffusion feedback-loop drift experiments: oneshot, iterate, and continuous video tools"
+readme = "README.md"
+authors = [
+    { name = "Refinement Systems", email = "contact@refinement.systems" }
+]
+requires-python = ">=3.13"
+dependencies = [
+    "accelerate>=1.15.0",
+    "diffusers>=0.40.0",
+    "imageio>=2.37.4",
+    "imageio-ffmpeg>=0.6.0",
+    "opencv-python-headless>=5.0.0.93",
+    "pillow>=12.3.0",
+    "protobuf>=7.36.1",
+    "safetensors>=0.8.0",
+    "sentencepiece>=0.2.2",
+    "torch>=2.14.0",
+    "transformers>=5.17.0",
+]
+
+[project.scripts]
+dltb-oneshot = "dltb.oneshot:main"
+dltb-iterate = "dltb.iterate:main"
+dltb-continuous = "dltb.continuous:main"
+
+[build-system]
+requires = ["uv_build>=0.12.7,<0.13.0"]
+build-backend = "uv_build"
