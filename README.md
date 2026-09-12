@@ -24,6 +24,12 @@ Three scripts share the library code in `src/dltb/` (`models`, `imaging`,
   state blended into each new frame (`--mode stateful`, optical-flow
   reprojection on by default), plus failure tails that branch from the shared
   end-of-video state (`--tail-modes freeze,free,black`).
+- `dltb-klein` — the same video loop, restricted to the FLUX.2 klein editors
+  (`flux2-klein-4b`, ungated, default / `flux2-klein-9b`, gated). Klein is a
+  reference-image editor: no `--strength`, per-pass change scales ~linearly
+  with the blend (default `0.1`, far below the img2img models), and the prompt
+  is the de-facto per-pass edit-strength knob. `scripts/sweep-klein.sh` walks
+  its prompt ladder and `--guidance-scale` probes.
 
 ## Models
 
@@ -66,6 +72,10 @@ uv run dltb-iterate --model sd-turbo --input menu.png --iterations 200
 # Video pipeline simulation: stateful blend + all three failure tails
 uv run dltb-continuous --model flux-schnell --input clip.mp4 --mode stateful \
     --anchor-blend 0.3 --max-frames 300 --tail-frames 60 --tail-modes freeze,free,black
+
+# Klein editors: prompt is the per-pass edit-strength knob
+uv run dltb-klein --input clip.mp4 --prompt "slightly enhance the fine details" \
+    --tail-frames 60 --tail-modes freeze
 
 # FLUX.1-schnell, CPU-offloaded to fit a 24 GB card
 uv run dltb-iterate --model flux-schnell --input menu.png --offload

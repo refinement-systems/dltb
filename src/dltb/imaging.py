@@ -27,6 +27,7 @@ class PassSettings:
     prompt: str = ""
     num_inference_steps: int = 4
     strength: float = 0.4
+    guidance_scale: float | None = None  # None -> the model's default
 
 
 def make_generator(seed: int, fixed_seed: bool, i: int = 0):
@@ -47,7 +48,8 @@ def run_pass(pipe, spec, settings: PassSettings, source, generator,
         prompt=settings.prompt,
         image=source,
         num_inference_steps=settings.num_inference_steps,
-        guidance_scale=spec.guidance_scale,
+        guidance_scale=(settings.guidance_scale if settings.guidance_scale is not None
+                        else spec.guidance_scale),
         generator=generator,
         output_type="pil",
     )

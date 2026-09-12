@@ -149,6 +149,10 @@ cross-model comparison. No conclusion yet on whether the model is suitable at
 all, or whether a different conditioning/topology is needed (`flux2-klein-9b`
 is a reference-image editor: no `--strength`, full 4-step regeneration).
 
+2026-09-21: that topology redesign is now in the tree as `dltb-klein` +
+`scripts/sweep-klein.sh` (prompt-as-strength ladder, guidance probes). The
+pre-restructure scripts they were derived from live under `reference/`.
+
 Preview settings for reference: stateful, `--reproject`,
 `--max-frames 30 --tail-frames 10 --tail-modes freeze`.
 

@@ -80,7 +80,8 @@ def run(args: argparse.Namespace) -> None:
     pipe = load_pipeline(spec, args.offload)
     settings = PassSettings(prompt=args.prompt,
                             num_inference_steps=args.num_inference_steps,
-                            strength=args.strength)
+                            strength=args.strength,
+                            guidance_scale=args.guidance_scale)
 
     from PIL import Image
     original = prepare_frame(Image.open(args.input), width, height)

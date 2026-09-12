@@ -162,7 +162,8 @@ def run(args: argparse.Namespace) -> None:
 
     settings = PassSettings(prompt=args.prompt,
                             num_inference_steps=args.num_inference_steps,
-                            strength=args.strength)
+                            strength=args.strength,
+                            guidance_scale=args.guidance_scale)
 
     current = None      # previous PROCESSED frame (carried state)
     prev_source = None  # previous SOURCE frame (for flow estimation)

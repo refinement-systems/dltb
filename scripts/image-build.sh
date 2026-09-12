@@ -35,7 +35,7 @@ cp image/Dockerfile "${stage}/Dockerfile"
 # Guard against building something broken.
 for f in pyproject.toml uv.lock \
          src/dltb/models.py src/dltb/imaging.py src/dltb/output.py src/dltb/args.py \
-         src/dltb/oneshot.py src/dltb/iterate.py src/dltb/continuous.py \
+         src/dltb/oneshot.py src/dltb/iterate.py src/dltb/continuous.py src/dltb/klein.py \
          Dockerfile; do
     [[ -f "${stage}/$f" ]] || { echo "image-build: missing $f" >&2; exit 1; }
 done

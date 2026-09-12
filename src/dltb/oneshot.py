@@ -69,7 +69,8 @@ def run(args: argparse.Namespace) -> None:
 
     settings = PassSettings(prompt=args.prompt,
                             num_inference_steps=args.num_inference_steps,
-                            strength=args.strength)
+                            strength=args.strength,
+                            guidance_scale=args.guidance_scale)
     result = run_pass(pipe, spec, settings, source,
                       make_generator(args.seed, args.fixed_seed), width, height)
     result_path = frames_dir / "frame_0001.png"

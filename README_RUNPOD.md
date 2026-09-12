@@ -200,6 +200,7 @@ cd imgiter-<stamp>
 uv sync --frozen          # re-points the editable install from /opt/imgiter to this tree
 
 scripts/sweep.sh          # full sweep; add OFFLOAD=1 on <48 GB GPUs for the big models
+scripts/sweep-klein.sh    # klein prompt ladder + guidance probes (single model)
 ```
 
 - Dependencies are baked into the image at `/opt/imgiter/.venv`
@@ -227,6 +228,12 @@ skip the model re-download. A sweep-only preview is still available with
 Useful `sweep.sh` env overrides: `MODELS`, `BLENDS`, `BASELINE`, `MAX_FRAMES`,
 `TAIL_FRAMES`, `SAVE_EVERY`, `STRENGTH`, `STRENGTH_MODELS`, `DESC`, `OFFLOAD`,
 `REPROJECT`, `CLIP`, `EXTRA_ARGS`, `DRY_RUN`, `SKIP_GPU_CHECK`.
+
+Klein regime (`scripts/sweep-klein.sh`, drives `dltb-klein`): `MODEL`
+(default `flux2-klein-9b`; `4b` is ungated), `BLEND` (default `0.1`),
+`GUIDANCES` (default "2.0 4.0"), plus the shared `CLIP`/`MAX_FRAMES`/
+`TAIL_FRAMES`/`TAIL_MODES`/`SAVE_EVERY`/`EXTRA_ARGS`/`DRY_RUN`/
+`SKIP_GPU_CHECK`. Single-model, so no hf-cache eviction between runs.
 
 ## 5. Model cache management
 
