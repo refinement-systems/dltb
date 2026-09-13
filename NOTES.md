@@ -334,3 +334,42 @@ REF_ORDER-aware role-naming prompts are all in `scripts/smoke.sh` /
 `scripts/sweep-klein.sh`. What is still pending is the GPU validation itself
 (prompt ladder + order A/B under dual-ref, then the reproject A/B).
 
+## GPU selection: re-check the whole Runpod catalog (action item, opened 2026-09-13)
+
+**Context:** the 2026-09-13 klein-validation run is on an **L40S** (48 GB,
+Ada, sm_89). At commissioning time every 48 GB option showed `Low` stock on
+both clouds (`runpodctl gpu list`: RTX 6000 Ada, L40S, A6000, A40); A100 SXM
+was the only 80 GB card at `Medium`. An L40S was picked over a plain **L40**
+despite the L40 being cheaper — see the reasoning below, which is exactly what
+this action item exists to verify rather than assume.
+
+**Reasoning to record (L40 vs L40S, and cheap-vs-fitting in general):** raw
+`$/hr` is the wrong metric for this workload. A cheaper-but-slower 48 GB card
+is only a win if the price ratio beats the runtime ratio — compare **price per
+pass (throughput per dollar)**, not price per hour. And either way, a slower
+48 GB card that fits natively beats an OOM-ing faster card:
+`--offload` moves a whole pipeline component to the GPU per pipeline call and
+measured ~20–25 s per `flux2-klein-9b` frame on a 32 GB RTX 5090 (~10× native).
+That number is the floor for any "just rent a cheaper 32 GB card" argument.
+
+**Action: re-check every GPU rentable on Runpod (secure AND community) against
+its specs and rebuild the `README_RUNPOD.md` §1 table.** For each candidate:
+
+- VRAM — native fit for all five models (48 GB remains the working
+  recommendation; per-model peaks in the README table),
+- compute capability / sm_ version vs the CUDA 13 wheels in `uv.lock`
+  (host driver ≥ 580; sm_89/90/120 verified supported),
+- `$/hr` secure vs community (stock changes hourly — re-run
+  `runpodctl gpu list` and note the date),
+- throughput: record a real number where a run exists. Right now the tree has
+  no measured L40S figure at all; the 2026-09-13 run should note
+  frames/minute for `flux2-klein-9b` (plus sd-turbo/sdxl-turbo), so the next
+  comparison works from data instead of a guess.
+
+**Rows the current README table is missing:** **L40** (48 GB, non-S — lower
+clocks/memory bandwidth than the L40S, often cheaper), and the non-48 GB
+classes already listed (32 GB consumer, 80 GB A100/H100) should stay in the
+table so the price/compute trade is explicit rather than implicit. The
+appendix VRAM probe is the cheap way to get peak VRAM; a fixed
+`--max-frames` run gives the throughput denominator.
+
