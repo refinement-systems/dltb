@@ -1,5 +1,7 @@
 # DLTB - Deep Learning Tripping Balls
 
+Archived, see https://tangled.org/refinement.systems/dltb
+
 This is an attempt to have DLSS5 at home, but weirder.
 
 Trying to test what happens when a generative loop is fed its own output,
