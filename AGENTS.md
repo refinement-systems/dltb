@@ -59,7 +59,8 @@ in `pyproject.toml`):
 | `args.py` | argparse flag groups shared by the tools |
 | `oneshot.py` / `iterate.py` | single pass / free-running self-iteration |
 | `continuous.py` | video loop: anchored boil test vs stateful blend, reproject, freeze/free/black tails |
-| `klein.py` | klein-restricted wrapper; delegates to `continuous.run()` |
+| `assemble.py` | CPU-only local mp4 assembly from a run's saved frames (split workflow; `dltb-assemble`) |
+| `klein.py` | klein-restricted wrapper; dual-ref conditioning hook; delegates to `continuous.run()` |
 
 Key invariants:
 
@@ -68,11 +69,16 @@ Key invariants:
 - Model differences are encoded in `ModelSpec` (`uses_strength`, `pass_size`,
   `gated`, dtype/variant), not in `if model == ...` at call sites. Adding a
   model = adding a `MODELS` entry (plus docs/tables in README.md).
-- `dltb-klein` shares `continuous.run()` wholesale — only its argument surface
-  (model restriction, blend default 0.1, guidance warning) differs.
-- Run-directory tags encode only mode/blend/tails. Runs differing in other
-  knobs (prompt, strength, steps) must use `--output-dir` subtrees or they
-  silently overwrite earlier results (see how `sweep.sh` does it).
+- `dltb-klein` shares `continuous.run()` wholesale but customizes conditioning
+  via the `run(args, make_conditioning=...)` hook: `--conditioning dual-ref`
+  passes `[state, frame]` as two clean reference images instead of the pixel
+  blend (`--conditioning blend`, the default, exercises the default
+  `_blend_conditioning`). Its argument surface also restricts models, defaults
+  blend to 0.1, and warns about inert guidance.
+- Run-directory tags encode only mode/blend-or-conditioning/tails
+  (dual-ref: `..._dualref[-norepro]_tails…`). Runs differing in other knobs
+  (prompt, strength, steps, `--ref-order`) must use `--output-dir` subtrees or
+  they silently overwrite earlier results (see how `sweep.sh` does it).
 - User-facing errors fail fast via `raise SystemExit("message")`.
 - Most modules and scripts carry the ISC license header; keep it on new files
   in `src/dltb/` and `scripts/`.

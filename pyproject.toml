@@ -26,6 +26,7 @@ dltb-oneshot = "dltb.oneshot:main"
 dltb-iterate = "dltb.iterate:main"
 dltb-continuous = "dltb.continuous:main"
 dltb-klein = "dltb.klein:main"
+dltb-assemble = "dltb.assemble:main"
 
 [build-system]
 requires = ["uv_build>=0.12.7,<0.13.0"]

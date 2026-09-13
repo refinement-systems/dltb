@@ -9,6 +9,16 @@
 # the blend alpha (~linear, no constant rewrite bias like the img2img models),
 # and the PROMPT is the de-facto per-pass edit-strength knob.
 #
+# CONDITIONING (stateful mode):
+#   blend    (default) carried state and fresh frame pixel-blended into ONE
+#            reference; --anchor-blend applies (BLEND env).
+#   dual-ref carried state and fresh frame as TWO separate clean references --
+#            no ghosted blend for the editor to parse; state/anchor weighting
+#            is done by the model. BLEND is ignored; REF_ORDER picks [P,N]
+#            (state-first, default) or [N,P]. The prompt table switches to
+#            role-naming prompts ("image 2 is the current frame; ...", which
+#            assumes state-first order -- swap the roles if REF_ORDER=frame-first).
+#
 # What this sweep runs (all --mode stateful, one source pass per prompt):
 #
 #   1. Prompt ladder       : neutral -> slight -> photo -> dramatic enhancement,
@@ -30,21 +40,29 @@
 #
 # Each prompt gets its own --output-dir subtree (output/<model>/prompt-<slug>/),
 # because dltb-klein's directory tag encodes only mode/blend/tails - without
-# the subtree, prompt runs would silently overwrite each other.
+# the subtree, prompt runs would silently overwrite each other. (Dual-ref runs
+# are tagged ..._dualref[-norepro] instead of ..._stateful-a<blend>.)
 #
 # Usage (from any directory inside the repo):
 #   scripts/sweep-klein.sh
 #   DRY_RUN=1 scripts/sweep-klein.sh
 #   MODEL=flux2-klein-4b BLEND=0.2 scripts/sweep-klein.sh
+#   CONDITIONING=dual-ref scripts/sweep-klein.sh
+#   CONDITIONING=dual-ref REF_ORDER=frame-first scripts/sweep-klein.sh
 #
 # Environment overrides:
 #   MODEL         klein model key          (default flux2-klein-9b; 4b is ungated)
 #   CLIP          source video             (default input/video_cropped.mp4)
+#   CONDITIONING  blend | dual-ref         (default blend)
+#   REF_ORDER     state-first | frame-first (default state-first; dual-ref only)
 #   BLEND         anchor-blend for all runs (default 0.1 - klein's active range
-#                 is far below the img2img models; try 0.03 0.05 0.2 manually)
+#                 is far below the img2img models; try 0.03 0.05 0.2 manually;
+#                 IGNORED under CONDITIONING=dual-ref)
 #   MAX_FRAMES    source frames per run    (default 300; empty = whole clip)
 #   TAIL_FRAMES   frames per tail          (default 60; 0 = no tails)
-#   TAIL_MODES    tail scenario list       (default freeze; "freeze,free" etc.)
+#   TAIL_MODES    tail scenario list       (default freeze; "freeze,free" etc.
+#                 NOTE: under dual-ref, free = single-reference regeneration
+#                 from state alone)
 #   SAVE_EVERY    save every Nth frame     (default 10)
 #   STEPS         steps-probe values       (default "2 8", bracketing the default 4;
 #                 empty = skip the probe)
@@ -65,6 +83,8 @@ cd "$(cd "$(dirname "${BASH_SOURCE[0]}")/.." && pwd)"
 
 MODEL="${MODEL:-flux2-klein-9b}"
 CLIP="${CLIP:-input/video_cropped.mp4}"
+CONDITIONING="${CONDITIONING:-blend}"
+REF_ORDER="${REF_ORDER:-state-first}"
 BLEND="${BLEND:-0.1}"
 MAX_FRAMES="${MAX_FRAMES-300}"
 TAIL_FRAMES="${TAIL_FRAMES:-60}"
@@ -74,20 +94,46 @@ STEPS="${STEPS-2 8}"
 EXTRA_ARGS="${EXTRA_ARGS:-}"
 DRY_RUN="${DRY_RUN:-0}"
 
+case "$CONDITIONING" in
+    blend|dual-ref) ;;
+    *) echo "sweep-klein: CONDITIONING must be blend or dual-ref (got '$CONDITIONING')" >&2; exit 1 ;;
+esac
+case "$REF_ORDER" in
+    state-first|frame-first) ;;
+    *) echo "sweep-klein: REF_ORDER must be state-first or frame-first (got '$REF_ORDER')" >&2; exit 1 ;;
+esac
+
 # ---------------------------------------------------------------- prompts ----
 # slug|prompt pairs. The slug becomes the output subdirectory; keep slugs short,
 # lowercase, hyphenated. Empty prompt = preservation baseline (no flag passed).
-PROMPT_TABLE=(
-    "neutral|"
-    "enhance-slight|slightly enhance the fine details"
-    "enhance-photo|enhance details and lighting, make it photorealistic"
-    "enhance-dramatic|dramatically enhance every texture and surface detail"
-    "weathering|add more weathering, moss and water stains to the stone"
-)
+if [[ "$CONDITIONING" == "dual-ref" ]]; then
+    # Role-naming prompts. Phrasing assumes state-first order (image 1 = carried
+    # state/appearance reference, image 2 = current frame/content target);
+    # swap the roles if REF_ORDER=frame-first.
+    PROMPT_TABLE=(
+        "neutral|"
+        "enhance-slight|image 2 is the current frame; keep the appearance of image 1, slightly enhancing fine details"
+        "enhance-photo|image 2 is the current frame; keep the appearance of image 1, enhancing details and lighting to look photorealistic"
+        "enhance-dramatic|image 2 is the current frame; keep the appearance of image 1, dramatically enhancing every texture and surface detail"
+        "weathering|image 2 is the current frame; keep the appearance of image 1, adding more weathering, moss and water stains to the stone"
+    )
+else
+    PROMPT_TABLE=(
+        "neutral|"
+        "enhance-slight|slightly enhance the fine details"
+        "enhance-photo|enhance details and lighting, make it photorealistic"
+        "enhance-dramatic|dramatically enhance every texture and surface detail"
+        "weathering|add more weathering, moss and water stains to the stone"
+    )
+fi
 
 # Steps probes reuse the mild-enhancement prompt.
 PROBE_SLUG="enhance-slight"
-PROBE_PROMPT="slightly enhance the fine details"
+if [[ "$CONDITIONING" == "dual-ref" ]]; then
+    PROBE_PROMPT="image 2 is the current frame; keep the appearance of image 1, slightly enhancing fine details"
+else
+    PROBE_PROMPT="slightly enhance the fine details"
+fi
 
 # -------------------------------------------------------------- preflight ----
 if [[ "$DRY_RUN" != "1" ]]; then
@@ -115,7 +161,12 @@ LOG="output/sweep_klein_$(date -u +%Y%m%d-%H%M%S).log"
 
 # Flags shared by every run.
 common=(--model "$MODEL" --input "$CLIP" --save-every "$SAVE_EVERY"
-        --mode stateful --anchor-blend "$BLEND")
+        --mode stateful --conditioning "$CONDITIONING")
+if [[ "$CONDITIONING" == "dual-ref" ]]; then
+    common+=(--ref-order "$REF_ORDER")   # --anchor-blend is ignored under dual-ref
+else
+    common+=(--anchor-blend "$BLEND")
+fi
 if [[ -n "$MAX_FRAMES" ]]; then common+=(--max-frames "$MAX_FRAMES"); fi
 if [[ "$TAIL_FRAMES" -gt 0 ]]; then
     common+=(--tail-frames "$TAIL_FRAMES" --tail-modes "$TAIL_MODES")
@@ -133,7 +184,7 @@ run() {
     uv run dltb-klein "$@" 2>&1 | tee -a "$LOG"
 }
 
-log "sweep-klein: model=$MODEL clip=$CLIP blend=$BLEND"
+log "sweep-klein: model=$MODEL clip=$CLIP conditioning=$CONDITIONING ref_order=$REF_ORDER blend=$BLEND"
 log "sweep-klein: max_frames=${MAX_FRAMES:-<all>} tail=${TAIL_FRAMES}x${TAIL_MODES} steps='${STEPS:-<none>}'"
 log "sweep-klein: log=$LOG"
 

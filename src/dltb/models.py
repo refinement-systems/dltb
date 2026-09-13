@@ -20,8 +20,9 @@ between families:
   flux2klein (Flux2KleinPipeline)
       reference-image editors: regenerate from pure noise, NO --strength
 
-NOTE - FLUX.2 klein models: refinement idea for stateful loops is to pass
-[P_{n-1}, N] as two separate reference images instead of pixel-blending.
+NOTE - FLUX.2 klein models: stateful loops can pass [P_{n-1}, N] as two
+separate reference images instead of pixel-blending (dltb-klein
+--conditioning dual-ref; the pipeline resizes/packs each reference).
 """
 
 from __future__ import annotations

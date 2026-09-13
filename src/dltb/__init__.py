@@ -13,5 +13,11 @@ Tools (installed as console scripts; see pyproject.toml):
   dltb-iterate      free-running image self-iteration + mp4 timelapse
   dltb-continuous   video pipeline simulation (anchored/stateful, tails)
   dltb-klein        the continuous loop restricted to the FLUX.2 klein editors
-                    (no --strength; prompt = per-pass edit strength)
+                    (no --strength; prompt = per-pass edit strength;
+                    --conditioning blend|dual-ref)
+
+CPU-only local post-processing (no torch/CUDA; run on saved frames):
+
+  analyze_drift.py  drift metrics for a frames dir
+  assemble.py       dltb-assemble: encode mp4s from a run's saved frames
 """

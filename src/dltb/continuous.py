@@ -45,9 +45,18 @@ the freshly rendered frame from the engine.
     black  : engine submits BLACK frames; source = blend(P_{n-1}, black)
              (renderer-crash scenario; a decay driver, NOT free-running)
 
-NOTE - FLUX.2 klein models are reference-image editors (regenerate from pure
-noise, NO --strength). Refinement idea for klein stateful mode: pass
-[P_{n-1}, N] as two separate reference images instead of pixel-blending.
+  CONDITIONING STRATEGIES: run() accepts make_conditioning, a factory
+  (args, estimate_flow, warp) -> (combine, tail_source), so tools can replace
+  HOW carried state and fresh frame become the model input:
+
+    combine(carried, new_frame, prev_source) -> source   (main loop)
+    tail_source(mode, current, last_source, black) -> source   (tail phases)
+
+  The default is the pixel-blend above (_blend_conditioning). dltb-klein uses
+  the hook for dual-reference conditioning ([P, N] as two clean reference
+  images instead of one blended one; see NOTES.md, "klein dual-reference
+  conditioning"). When args.conditioning == "dual-ref" the output tag is
+  dualref[-norepro] (no blend component).
 
 Example:
     uv run dltb-continuous --model flux-schnell --input clip.mp4 --mode stateful \\
@@ -116,7 +125,31 @@ def parse_args(argv: list[str] | None = None) -> argparse.Namespace:
     return p.parse_args(argv)
 
 
-def run(args: argparse.Namespace) -> None:
+def _blend_conditioning(args, estimate_flow, warp):
+    """Default conditioning: pixel-blend the (optionally reprojected) carried
+    state with the fresh frame into ONE model input."""
+    from PIL import Image
+
+    def combine(carried, new_frame, prev_source):
+        c = carried
+        if estimate_flow is not None and prev_source is not None:
+            c = warp(c, estimate_flow(prev_source, new_frame))
+        return Image.blend(c, new_frame, args.anchor_blend)
+
+    def tail_source(mode, current, last_source, black):
+        if mode == "free":
+            return current                                # anchor dropped
+        if mode == "black":
+            return Image.blend(current, black, args.anchor_blend)
+        return Image.blend(current, last_source, args.anchor_blend)  # freeze
+
+    return combine, tail_source
+
+
+def run(args: argparse.Namespace, make_conditioning=None) -> None:
+    """Run the video loop. make_conditioning (optional) is a factory
+    (args, estimate_flow, warp) -> (combine, tail_source) replacing the
+    default pixel-blend conditioning; see the module docstring."""
     spec = MODELS[args.model]
     width, height = resolve_geometry(spec, args.width, args.height)
     check_requirements(spec, args.num_inference_steps, args.strength)
@@ -127,9 +160,13 @@ def run(args: argparse.Namespace) -> None:
     import numpy as np
     from PIL import Image
 
+    dual_ref = getattr(args, "conditioning", "blend") == "dual-ref"
     mode_tag = args.mode
     if args.mode == "stateful":
-        mode_tag = f"stateful-a{args.anchor_blend:g}"
+        if dual_ref:
+            mode_tag = "dualref"                    # no blend component
+        else:
+            mode_tag = f"stateful-a{args.anchor_blend:g}"
         if not args.reproject:
             mode_tag += "-norepro"
     if args.tail_frames:
@@ -141,6 +178,11 @@ def run(args: argparse.Namespace) -> None:
     estimate_flow = warp = None
     if use_reproject:
         estimate_flow, warp = make_reprojector()
+
+    if make_conditioning is None:
+        combine, tail_source = _blend_conditioning(args, estimate_flow, warp)
+    else:
+        combine, tail_source = make_conditioning(args, estimate_flow, warp)
 
     frames_dir = out_dir / "frames"
     frames_dir.mkdir(parents=True, exist_ok=True)
@@ -154,6 +196,7 @@ def run(args: argparse.Namespace) -> None:
     if total in (None, float("inf")):
         total = "?"
     print(f"source: {args.input} | fps={src_fps} | frames={total} | mode={args.mode} | "
+          f"conditioning={'dual-ref' if dual_ref else 'blend'} | "
           f"reproject={'on' if use_reproject else 'off'} | "
           f"tails={args.tail_frames}x{','.join(args.tail_modes) if args.tail_frames else 'off'}")
 
@@ -194,11 +237,7 @@ def run(args: argparse.Namespace) -> None:
             if args.mode == "anchored" or current is None:
                 source = new_frame          # independent per frame -> boil test
             else:                           # stateful: carry processed state forward
-                carried = current
-                if use_reproject and prev_source is not None:
-                    flow = estimate_flow(prev_source, new_frame)
-                    carried = warp(current, flow)   # reproject history (motion vectors)
-                source = Image.blend(carried, new_frame, args.anchor_blend)
+                source = combine(current, new_frame, prev_source)
             prev_source = new_frame
             one_pass(source, n, writer)
     finally:
@@ -220,12 +259,7 @@ def run(args: argparse.Namespace) -> None:
             tail_writer = imageio.get_writer(tail_video, fps=src_fps, codec="libx264")
             try:
                 for t in range(1, args.tail_frames + 1):
-                    if mode == "free":
-                        source = current                                # anchor dropped
-                    elif mode == "black":
-                        source = Image.blend(current, black, args.anchor_blend)
-                    else:  # freeze: re-submit last real frame; zero flow -> no warp
-                        source = Image.blend(current, last_source, args.anchor_blend)
+                    source = tail_source(mode, current, last_source, black)
                     one_pass(source, t, tail_writer, tag=f"{mode} ")
             finally:
                 tail_writer.close()

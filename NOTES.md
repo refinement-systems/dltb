@@ -239,10 +239,14 @@ not break the tool). The 2-frame hash A/B remains optional and only worth
 doing after a diffusers upgrade. Next-experiment sketch for klein's control
 problem: dual-reference conditioning, see the last section.
 
-## Sketch: klein dual-reference conditioning (`--conditioning dual-ref`)
+## Klein dual-reference conditioning (`--conditioning dual-ref`)
 
-**Status: DESIGN ONLY (2026-09-13), not implemented.** The candidate fix for
-klein's control problem, replacing the pixel-blend proxy.
+**Status: IMPLEMENTED 2026-09-13.** The candidate fix for klein's control
+problem, replacing the pixel-blend proxy. The design below is what landed
+(one deviation: `continuous.run` takes a `make_conditioning` factory that
+returns `(combine, tail_source)` function pairs, rather than a single
+`condition(...)` callable, because tails need their own source construction).
+Runs validating it (prompt ladder + order A/B) are still pending.
 
 **Why:** klein's calibration trouble (too weak at blend 0.6–0.8, "melting" at
 0.1 — see the calibration section) is plausibly an artifact of pixel-blending
@@ -266,11 +270,10 @@ state and the fresh frame can both be conditioning inputs:
   list of two PIL images flows straight through. `--width/--height` still
   set the output canvas; references are resized/packed per-image by the
   pipeline (our 768² frames are under the 1 MP auto-resize cap).
-- `klein.py` needs its own stateful loop for dual-ref (it currently delegates
-  to `continuous.run`, whose blend is baked in). Either fork the loop, or —
-  cleaner — generalize `continuous.run` to accept a
-  `condition(carried, new_frame) -> source` callable, with the current
-  blend/reproject logic as the default implementation.
+- `continuous.run` was generalized (no fork): it accepts
+  `make_conditioning(args, estimate_flow, warp) -> (combine, tail_source)`,
+  with the former blend/reproject logic as the default
+  (`_blend_conditioning`); `klein.py` supplies `_dual_ref_conditioning`.
 - Reprojection: probably UNNECESSARY in dual-ref (the fresh frame is an
   explicit reference; the model aligns content, not pixel coordinates) — but
   keep it probeable: warping the carried reference may still help temporal
@@ -291,7 +294,7 @@ state and the fresh frame can both be conditioning inputs:
 - Interaction with the steps probe: re-run the steps axis under dual-ref —
   intensity may interact with conditioning strength.
 
-**Suggested first runs (once implemented):**
+**Suggested first runs:**
 
     uv run dltb-klein --model flux2-klein-4b --input input/video_cropped.mp4 \
         --conditioning dual-ref --prompt "slightly enhance the fine details" \
@@ -301,8 +304,8 @@ state and the fresh frame can both be conditioning inputs:
     uv run dltb-klein --model flux2-klein-4b --input input/video_cropped.mp4 \
         --conditioning dual-ref --ref-order state-first --max-frames 2
 
-Then add a `SMOKE_KLEIN=1` leg to `scripts/smoke.sh` (2 frames + 1 tail frame,
-flux2-klein-4b; off by default because of the 15 GB download) and a
-`CONDITIONING=dual-ref` toggle to `scripts/sweep-klein.sh` so the prompt
-ladder + steps probe re-run under the new conditioning.
+Remaining follow-ups: add a `SMOKE_KLEIN=1` leg to `scripts/smoke.sh` (2 frames
++ 1 tail frame, flux2-klein-4b; off by default because of the 15 GB download);
+the `CONDITIONING=dual-ref REF_ORDER={state-first,frame-first}` toggle in
+`scripts/sweep-klein.sh` is done (it also swaps in role-naming prompts).
 

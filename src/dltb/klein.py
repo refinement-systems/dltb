@@ -1,3 +1,14 @@
+# Permission to use, copy, modify, and/or distribute this software for
+# any purpose with or without fee is hereby granted.
+#
+# THE SOFTWARE IS PROVIDED “AS IS” AND THE AUTHOR DISCLAIMS ALL
+# WARRANTIES WITH REGARD TO THIS SOFTWARE INCLUDING ALL IMPLIED WARRANTIES
+# OF MERCHANTABILITY AND FITNESS. IN NO EVENT SHALL THE AUTHOR BE LIABLE
+# FOR ANY SPECIAL, DIRECT, INDIRECT, OR CONSEQUENTIAL DAMAGES OR ANY
+# DAMAGES WHATSOEVER RESULTING FROM LOSS OF USE, DATA OR PROFITS, WHETHER IN
+# AN ACTION OF CONTRACT, NEGLIGENCE OR OTHER TORTIOUS ACTION, ARISING OUT
+# OF OR IN CONNECTION WITH THE USE OR PERFORMANCE OF THIS SOFTWARE.
+
 """dltb-klein: video pipeline simulation with the FLUX.2 klein editors.
 
 Klein (FLUX.2-klein-4B / -9B) is a reference-image EDITOR, not a partial-noise
@@ -7,7 +18,8 @@ alpha (roughly linear -- no constant rewrite bias like sd/sdxl-turbo and
 flux-schnell). Consequences for the loop:
 
   --anchor-blend    klein's active range is far below the img2img models
-                    (default here 0.1; try 0.03 / 0.05 / 0.2)
+                    (default here 0.1; try 0.03 / 0.05 / 0.2). Applies to
+                    --conditioning blend only; IGNORED under dual-ref.
   --prompt          the de-facto per-pass edit-strength knob: an empty or
                     neutral prompt preserves, an edit instruction compounds
                     every pass (scripts/sweep-klein.sh walks that ladder)
@@ -20,18 +32,37 @@ flux-schnell). Consequences for the loop:
   warns and ignores the value. dltb-klein prints its own warning; see
   NOTES.md, "FLUX.2 klein: --guidance-scale is inert".
 
-This runs the same loop topologies as dltb-continuous (anchored boil test /
-stateful blend with optical-flow reprojection / failure tails), restricted to
-the klein pair, with the klein-appropriate blend default. It shares
-continuous.run() -- only argument defaults and model choice differ.
+CONDITIONING (--conditioning, stateful mode only):
 
-Refinement idea: pass [P_{n-1}, N] as two separate reference images instead
-of pixel-blending.
+  blend    (default) pixel-blend the (reprojected) carried state and the fresh
+           frame into ONE reference image: image = (1-a)*R(P_{n-1}) + a*N_n
+
+  dual-ref pass the carried state and the fresh frame as TWO SEPARATE clean
+           reference images: image = [R(P_{n-1}), N_n]. Flux2KleinPipeline
+           accepts a list natively (each reference is preprocessed and packed
+           onto the sequence axis), and each reference stays in-distribution --
+           no ghosted blend mush for the editor to parse. The model itself
+           decides how to weight state vs. anchor through attention, which is
+           categorically closer to DLSS 5's multi-input conditioning than the
+           pixel blend. --anchor-blend is ignored in this mode.
+
+           --ref-order {state-first,frame-first} (default state-first) selects
+           [P, N] vs [N, P]; whether klein treats reference order as
+           "primary vs target" is an open question -- A/B it (see NOTES.md).
+
+           Tails under dual-ref: freeze = [P, last_source],
+           free = [P] ALONE (single-reference regeneration from state -- the
+           pure buffer-echo case), black = [P, black].
+
+           Reprojection stays probeable: with --reproject (default) the
+           CARRIED reference is warped by the source-frame flow before
+           pairing; A/B with --no-reproject.
 
 Example:
     uv run dltb-klein --model flux2-klein-4b --input clip.mp4 \\
-        --prompt "slightly enhance the fine details" \\
-        --tail-frames 60 --tail-modes freeze
+        --conditioning dual-ref \\
+        --prompt "image 2 is the current frame; keep the appearance of image 1" \\
+        --tail-frames 60 --tail-modes freeze,free
 """
 
 from __future__ import annotations
@@ -43,6 +74,31 @@ from .continuous import _parse_tail_modes, run as run_continuous
 from .models import model_key
 
 KLEIN_MODELS = ("flux2-klein-4b", "flux2-klein-9b")
+
+
+def _dual_ref_conditioning(args, estimate_flow, warp):
+    """Klein dual-reference conditioning: carried state and fresh frame as two
+    separate clean references (a list flows through imaging.run_pass unchanged).
+    If reprojection is on, the CARRIED reference is warped by the source-frame
+    flow before pairing; the fresh frame is never warped."""
+
+    def ordered(state_img, frame_img):
+        if args.ref_order == "state-first":
+            return [state_img, frame_img]
+        return [frame_img, state_img]
+
+    def combine(carried, new_frame, prev_source):
+        c = carried
+        if estimate_flow is not None and prev_source is not None:
+            c = warp(c, estimate_flow(prev_source, new_frame))
+        return ordered(c, new_frame)
+
+    def tail_source(mode, current, last_source, black):
+        if mode == "free":
+            return [current]   # anchor dropped: single-reference regeneration
+        return ordered(current, black if mode == "black" else last_source)
+
+    return combine, tail_source
 
 
 def parse_args(argv: list[str] | None = None) -> argparse.Namespace:
@@ -61,17 +117,29 @@ def parse_args(argv: list[str] | None = None) -> argparse.Namespace:
     p.add_argument("--mode", choices=["anchored", "stateful"], default="stateful",
                    help="Loop topology (see module docstring). anchored = "
                         "independent per-frame boil test; stateful = carried "
-                        "state blended with each new frame.")
+                        "state conditioned with each new frame.")
+    p.add_argument("--conditioning", choices=["blend", "dual-ref"], default="blend",
+                   help="stateful mode only: how carried state + fresh frame become "
+                        "model input. blend = one pixel-blended reference "
+                        "(--anchor-blend applies); dual-ref = two separate clean "
+                        "references, model-weighted (blend ignored)")
+    p.add_argument("--ref-order", choices=["state-first", "frame-first"],
+                   default="state-first",
+                   help="dual-ref only: reference order [P, N] vs [N, P]; whether "
+                        "klein treats order as primary/target is an open question "
+                        "-- A/B it")
     p.add_argument("--anchor-blend", type=float, default=0.1,
-                   help="stateful mode: weight alpha of the fresh frame in the blend "
-                        "(1-a)*previous_output + a*new_frame. Klein's active range "
-                        "is far below the img2img models (try 0.03/0.05/0.2); "
-                        "0.0 = free-running, 1.0 = fully re-anchored every frame")
+                   help="stateful+blend only: weight alpha of the fresh frame in "
+                        "the blend (1-a)*previous_output + a*new_frame. Klein's "
+                        "active range is far below the img2img models (try "
+                        "0.03/0.05/0.2); 0.0 = free-running, 1.0 = fully "
+                        "re-anchored every frame. IGNORED under dual-ref.")
     p.add_argument("--reproject", action=argparse.BooleanOptionalAction, default=True,
                    help="stateful mode only: warp the carried state by optical flow "
-                        "estimated between consecutive source frames before blending "
-                        "(emulates engine motion vectors; needs opencv-python-headless). "
-                        "--no-reproject gives the naive history blend (ghosting).")
+                        "estimated between consecutive source frames before "
+                        "combining (emulates engine motion vectors; needs "
+                        "opencv-python-headless). Under dual-ref only the CARRIED "
+                        "reference is warped. --no-reproject gives the naive variant.")
     p.add_argument("--max-frames", type=int, default=None,
                    help="Stop after this many SOURCE frames (tail phases, if "
                         "any, come after)")
@@ -98,9 +166,16 @@ def run(args: argparse.Namespace) -> None:
             "--guidance-scale is inert'.",
             flush=True,
         )
-    # Identical loop to dltb-continuous; only the argument surface above
-    # differs (model restriction, klein blend default, guidance emphasis).
-    run_continuous(args)
+    if args.conditioning == "dual-ref":
+        if args.anchor_blend != 0.1:
+            print("dltb-klein: NOTE: --anchor-blend is ignored under "
+                  "--conditioning dual-ref (state/anchor weighting is done by "
+                  "the model, not by pixel blending).", flush=True)
+        run_continuous(args, make_conditioning=_dual_ref_conditioning)
+    else:
+        # Identical loop to dltb-continuous; only the argument surface above
+        # differs (model restriction, klein blend default, guidance emphasis).
+        run_continuous(args)
 
 
 def main(argv: list[str] | None = None) -> None:
