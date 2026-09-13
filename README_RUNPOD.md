@@ -12,7 +12,7 @@ real pod; prices and availability drift, so re-check the console.
 | Container disk | **150 GB**, ephemeral — holds the repo, the HF cache and the outputs |
 | Volume disk | **0** (none) |
 | Network volume | **none** — it would pin the pod to one datacenter and kill consumer-GPU availability |
-| Cache policy | **keep-one model**, enforced automatically by `scripts/sweep.sh` |
+| Cache policy | **keep all swept models** (~87.5 GB fits); `EVICT_CACHE=1` restores keep-one for small disks |
 | Data copy-out | before **stop / restart / terminate** — the container disk is wiped on all three |
 
 ```bash
@@ -105,9 +105,12 @@ showed ~85 MB used with the 12 GB image present.
 | `flux2-klein-9b` | 32.3 GB |
 | **all five** | **~87.5 GB** |
 
-With the keep-one policy the steady-state requirement is one model (~33 GB max)
-+ xet (≤10 GB) + outputs (a full video sweep is a few GB) ≈ **45 GB**. 150 GB
-gives ~3× headroom; it fits all five at once too, but there is no reason to.
+The default cache policy keeps every swept model (all five ≈ 87.5 GB) + xet
+(≤10 GB) + outputs (a full video sweep is a few GB) — comfortable on the
+150 GB disk, and revisiting an earlier model costs no re-download. With
+`EVICT_CACHE=1` (keep-one, `input/inputs.env`-configurable) the steady-state
+requirement drops to one model (~33 GB max) + xet + outputs ≈ **45 GB**, for
+smaller container disks.
 
 ### Why no volume disk / network volume
 
@@ -200,7 +203,8 @@ cd imgiter-<stamp>
 uv sync --frozen          # re-points the editable install from /opt/imgiter to this tree
 
 scripts/sweep.sh          # full sweep; add OFFLOAD=1 on <48 GB GPUs for the big models
-scripts/sweep-klein.sh    # klein prompt ladder + guidance probes (single model)
+scripts/sweep-klein.sh    # klein prompt ladder + steps probes + reproject A/B (single model)
+scripts/sweep-prompt.sh   # free-running prompt (x strength) sweep on one image
 ```
 
 - Dependencies are baked into the image at `/opt/imgiter/.venv`
@@ -223,7 +227,9 @@ bundle`, send. A one-off run with a different clip does not need the file:
 
 Smoke test after deploying a new bundle — one tiny run of every tool
 (`dltb-oneshot`, `dltb-iterate`, `dltb-continuous` both modes + tails, and the
-hf-cache helper), with artifact checks:
+hf-cache helper), with artifact checks. `SMOKE_KLEIN=1` adds the `dltb-klein`
+leg (both blend and dual-ref conditioning, `flux2-klein-4b` by default — a
+~15 GB download, which is why it is off by default):
 
 ```bash
 scripts/smoke.sh
@@ -238,11 +244,20 @@ Useful `sweep.sh` env overrides: `MODELS`, `BLENDS`, `BASELINE`, `MAX_FRAMES`,
 `REPROJECT`, `CLIP`, `EXTRA_ARGS`, `DRY_RUN`, `SKIP_GPU_CHECK`.
 
 Klein regime (`scripts/sweep-klein.sh`, drives `dltb-klein`): `MODEL`
-(default `flux2-klein-9b`; `4b` is ungated), `BLEND` (default `0.1`),
-`STEPS` (default "2 8", bracketing the default 4), plus the shared
+(default `flux2-klein-9b`; `4b` is ungated), `CONDITIONING` (`blend`, the
+default, or `dual-ref`), `REF_ORDER` (`state-first`, default; dual-ref only),
+`REPROJECT` (`1`/`0`/`ab`; defaults to `ab` under dual-ref — every leg runs
+with and without reprojection, the A/B), `BLEND` (default `0.1`), `STEPS`
+(default "2 8", bracketing the default 4), plus the shared
 `CLIP`/`MAX_FRAMES`/`TAIL_FRAMES`/`TAIL_MODES`/`SAVE_EVERY`/`EXTRA_ARGS`/
 `DRY_RUN`/`SKIP_GPU_CHECK`. Single-model, so no hf-cache eviction between
 runs.
+
+Prompt sweep on one image (`scripts/sweep-prompt.sh`, drives `dltb-iterate`):
+`MODEL` (default `sd-turbo`), `IMG`, `ITERATIONS` (default 20), `SAVE_EVERY`
+(default 1 — every frame), `VIDEO_FPS`, `STRENGTHS` (default none; full
+prompts × strengths cross product, classic img2img models only),
+`STRENGTH_MODELS`, plus `EXTRA_ARGS`/`DRY_RUN`/`SKIP_GPU_CHECK`.
 
 ## 5. Model cache management
 
@@ -255,9 +270,11 @@ scripts/hf-cache.sh clean               # drop all caches
 DRY_RUN=1 DEBUG=1 scripts/hf-cache.sh keep flux-schnell   # preview
 ```
 
-- `sweep.sh` calls `keep <model>` at the top of every model iteration, so the
+- With `EVICT_CACHE=1` (off by default — see `input_example/inputs.env`),
+  `sweep.sh` calls `keep <model>` at the top of every model iteration, so the
   disk only ever holds the model being swept. All lines are prefixed `hf-cache:`
-  and go into `output/sweep_*.log`.
+  and go into `output/sweep_*.log`. With the default `EVICT_CACHE=0` the cache
+  keeps every swept model (~87.5 GB for all five, fits the 150 GB disk).
 - Eviction happens **only at model boundaries**, never between the separate runs
   of one model — otherwise the same multi-GB weights would be re-downloaded once
   per run.

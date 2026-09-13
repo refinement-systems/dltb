@@ -36,8 +36,11 @@ Experiment drivers (bash, env-var configurable, all support `DRY_RUN=1`):
 
 ```bash
 DRY_RUN=1 scripts/sweep.sh                   # video sweep: boil test, blends, tails
-DRY_RUN=1 scripts/sweep-klein.sh             # klein prompt ladder + steps probes
+DRY_RUN=1 scripts/sweep-klein.sh             # klein prompt ladder + steps probes +
+                                            # reproject A/B (default under dual-ref)
+DRY_RUN=1 scripts/sweep-prompt.sh            # free-running prompt x strength sweep on one image
 scripts/smoke.sh                             # tiny run of every tool; needs GPU
+                                            # (SMOKE_KLEIN=1 adds dltb-klein, both conditionings)
 python3 src/dltb/analyze_drift.py <frames_dir>   # CPU-only drift metrics
 ```
 
@@ -132,6 +135,7 @@ scripts/smoke.sh && scripts/sweep.sh
 - 48 GB VRAM recommended; `--offload` for the two big models on smaller cards.
 - Container disk is **ephemeral on stop AND restart** — copy `output/` out
   before stopping. Pod sshd isn't started by default (NOTES.md has the fix).
-- HF cache is keep-one per model (sweep.sh evicts at model boundaries only);
-  `hf-cache.sh keep/clean` refuse to run without `HF_HOME` set — keep that
-  safety guard.
+- HF cache: swept models are kept by default (all five ≈ 87.5 GB fit the 150 GB
+  pod disk); `EVICT_CACHE=1` (env or `inputs.env`, like `IMG`/`CLIP`) restores
+  keep-one eviction at sweep model boundaries. `hf-cache.sh keep/clean` refuse
+  to run without `HF_HOME` set — keep that safety guard.

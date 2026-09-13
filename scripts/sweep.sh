@@ -22,9 +22,13 @@
 #   3. semantic anchor at the BASELINE blend   (--prompt "$DESC", freeze tail)
 #   4. strength probe, classic img2img models  (--strength "$STRENGTH", freeze tail)
 #
-# Before step 1 of each model, scripts/hf-cache.sh evicts every other model's
-# HuggingFace cache (keep-one policy: the disk only needs room for the model
-# being swept). All runs of one model share the cache; the next model evicts it.
+# Cache policy: by default swept models are KEPT in the HuggingFace cache (all
+# five fit the 150 GB pod disk at once, ~87.5 GB, so re-runs on an earlier
+# model cost nothing). EVICT_CACHE=1 restores the keep-one policy: before step
+# 1 of each model, scripts/hf-cache.sh evicts every other cached model, so the
+# disk only ever needs room for the model being swept (for small container
+# disks). Eviction happens at model boundaries only -- never between the runs
+# of one model.
 #
 # Stateful video runs reproject the carried state by optical flow before
 # blending (--reproject, on by default in dltb-continuous):
@@ -64,6 +68,11 @@
 #   STRENGTH          strength-probe value     (default 0.55)
 #   STRENGTH_MODELS   models for the probe     (default sd-turbo sdxl-turbo flux-schnell)
 #   DESC              semantic-anchor prompt
+#                     (default: describes the tracked example clip -- an
+#                      octopus in a coral habitat; see input_example/SOURCES.txt)
+#   EVICT_CACHE       1 = keep-one cache policy: evict every other cached model
+#                     at each model boundary (default 0 = keep everything; all
+#                     five models ≈ 87.5 GB fit the 150 GB pod disk)
 #   OFFLOAD=1         add --offload to every run (small GPUs; flux-schnell on 24 GB)
 #   REPROJECT        1 = optical-flow reprojection (default), 0 = naive blend
 #   EXTRA_ARGS        extra flags, word-split, appended to every run
@@ -89,9 +98,10 @@ TAIL_FRAMES="${TAIL_FRAMES:-60}"
 SAVE_EVERY="${SAVE_EVERY:-10}"
 STRENGTH="${STRENGTH:-0.55}"
 STRENGTH_MODELS="${STRENGTH_MODELS:-sd-turbo sdxl-turbo flux-schnell}"
-DESC="${DESC:-first-person gameplay footage in a sunlit stone courtyard}"
+DESC="${DESC:-underwater footage of an octopus in a coral habitat}"
 OFFLOAD="${OFFLOAD:-0}"
 REPROJECT="${REPROJECT:-1}"
+EVICT_CACHE="${EVICT_CACHE:-0}"
 DRY_RUN="${DRY_RUN:-0}"
 
 case "$REPROJECT" in
@@ -161,21 +171,25 @@ run() {
 
 log "sweep: clip=$CLIP"
 log "sweep: models='$MODELS' blends='$BLENDS' baseline=$BASELINE"
-log "sweep: max_frames=${MAX_FRAMES:-<all>} tail_frames=$TAIL_FRAMES save_every=$SAVE_EVERY reproject=$REPROJECT"
+log "sweep: max_frames=${MAX_FRAMES:-<all>} tail_frames=$TAIL_FRAMES save_every=$SAVE_EVERY reproject=$REPROJECT evict_cache=$EVICT_CACHE"
 log "sweep: log=$LOG"
 
 for MODEL in $MODELS; do
     log ""
     log "################ $MODEL ################"
 
-    # Keep-one cache policy. Evict other models here, at the model boundary --
-    # never between the runs of one model: sweep.sh starts a fresh
-    # `uv run dltb-continuous` per run, so evicting there would re-download
-    # the same multi-GB weights once per run.
-    if [[ "$DRY_RUN" == "1" ]]; then
-        DRY_RUN=1 scripts/hf-cache.sh keep "$MODEL" 2>&1 | tee -a "$LOG"
-    elif ! scripts/hf-cache.sh keep "$MODEL" 2>&1 | tee -a "$LOG"; then
-        log "sweep: WARNING -- cache eviction failed for $MODEL; continuing (disk may fill)"
+    # Optional keep-one cache eviction (EVICT_CACHE=1). Runs at the model
+    # boundary only -- never between the runs of one model: sweep.sh starts a
+    # fresh `uv run dltb-continuous` per run, so evicting there would
+    # re-download the same multi-GB weights once per run.
+    if [[ "$EVICT_CACHE" == "1" ]]; then
+        if [[ "$DRY_RUN" == "1" ]]; then
+            DRY_RUN=1 scripts/hf-cache.sh keep "$MODEL" 2>&1 | tee -a "$LOG"
+        elif ! scripts/hf-cache.sh keep "$MODEL" 2>&1 | tee -a "$LOG"; then
+            log "sweep: WARNING -- cache eviction failed for $MODEL; continuing (disk may fill)"
+        fi
+    else
+        log "sweep: cache eviction off (EVICT_CACHE=0) -- swept models stay cached"
     fi
 
     out_base="output/$MODEL"

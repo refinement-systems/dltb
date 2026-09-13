@@ -170,7 +170,7 @@ dropped on the floor: see
 [FLUX.2 klein: --guidance-scale is inert](#flux2-klein---guidance-scale-is-inert-step-wise-distilled)
 below.
 
-## flux2-klein-9b anchor-blend calibration (paused — needs a redesign)
+## flux2-klein-9b anchor-blend calibration (superseded by the dltb-klein redesign)
 
 Context: for `sd-turbo` / `sdxl-turbo` / `flux-schnell`, the stateful sweep at
 `--anchor-blend 0.1/0.3/0.5` produced an effect judged too strong (a
@@ -191,8 +191,7 @@ all, or whether a different conditioning/topology is needed (`flux2-klein-9b`
 is a reference-image editor: no `--strength`, full 4-step regeneration).
 
 2026-09-21: that topology redesign is now in the tree as `dltb-klein` +
-`scripts/sweep-klein.sh` (prompt-as-strength ladder, guidance probes). The
-pre-restructure scripts they were derived from live under `reference/`.
+`scripts/sweep-klein.sh` (prompt-as-strength ladder, guidance probes).
 Later the same day the guidance-probe leg turned out to be inert for klein —
 see the next section.
 
@@ -225,9 +224,9 @@ never reaches the model, via three independent points:
 - `--negative-prompt` is equally inert (negative embeddings are only computed
   under CFG).
 - The sweep was killed mid-probe; the meaningful legs (prompt ladder,
-  weathering attractor) were already on disk. `output/flux2-klein-9b/guidance2.0/`
-  is a partial duplicate of `prompt-enhance-slight/` — delete it (and
-  `guidance4.0/` if it ever started).
+  weathering attractor) were already on disk. (A partial `guidance2.0/`
+  duplicate of `prompt-enhance-slight/` sat in the pod's output tree — moot
+  since the pod's container disk is ephemeral.)
 
 **Follow-ups applied 2026-09-13:** the guidance leg of `sweep-klein.sh` is
 replaced by a `--num-inference-steps` probe (`STEPS="2 8"`, bracketing the
@@ -304,8 +303,9 @@ state and the fresh frame can both be conditioning inputs:
     uv run dltb-klein --model flux2-klein-4b --input input/video_cropped.mp4 \
         --conditioning dual-ref --ref-order state-first --max-frames 2
 
-Remaining follow-ups: add a `SMOKE_KLEIN=1` leg to `scripts/smoke.sh` (2 frames
-+ 1 tail frame, flux2-klein-4b; off by default because of the 15 GB download);
-the `CONDITIONING=dual-ref REF_ORDER={state-first,frame-first}` toggle in
-`scripts/sweep-klein.sh` is done (it also swaps in role-naming prompts).
+Remaining follow-ups: none in-tree — the `SMOKE_KLEIN=1` smoke leg, the
+reproject A/B (`REPROJECT=1|0|ab`, default `ab` under dual-ref), and
+REF_ORDER-aware role-naming prompts are all in `scripts/smoke.sh` /
+`scripts/sweep-klein.sh`. What is still pending is the GPU validation itself
+(prompt ladder + order A/B under dual-ref, then the reproject A/B).
 

@@ -14,8 +14,8 @@
 #
 # smoke.sh -- post-deploy smoke test: one tiny run of every tool.
 #
-# Verifies the three console scripts and the cache helper against a real GPU
-# using the cheapest model, inputs from input/inputs.env (falling back to the
+# Verifies the console scripts and the cache helper against a real GPU using
+# the cheapest model, inputs from input/inputs.env (falling back to the
 # tracked input_example/ files), and minimal budgets:
 #
 #   0. scripts/hf-cache.sh status   (dltb.models import + cache probe)
@@ -24,6 +24,12 @@
 #   3. dltb-continuous stateful     3 reprojected source frames + 2 frames
 #                                   per tail (freeze, free, black)
 #   4. dltb-continuous anchored     2 frames boil test
+#   5. dltb-klein (optional)        SMOKE_KLEIN=1: both conditionings
+#                                   (blend + dual-ref), 2 source frames +
+#                                   1 freeze-tail frame -- the cheapest
+#                                   end-to-end check of the klein loop,
+#                                   including the dual-ref reference-list
+#                                   code path
 #
 # Every step writes under output/smoke/ (wiped at start); the expected
 # artifacts are checked for existence and non-emptiness afterwards. Any
@@ -34,9 +40,10 @@
 #   MODEL=sdxl-turbo scripts/smoke.sh     # smoke another model
 #   SKIP_GPU_CHECK=1 scripts/smoke.sh     # bypass the CUDA preflight
 #
-# MODEL defaults to sd-turbo (2.4 GB). hf-cache keep-one means the disk
-# holds whichever model the last sweep ended on -- check step 0's output
-# and set MODEL=<that key> to skip the re-download.
+# MODEL defaults to sd-turbo (2.4 GB). With the default EVICT_CACHE=0 every
+# swept model stays cached, so check step 0's output and set MODEL=<a cached
+# key> to skip any re-download (under EVICT_CACHE=1 the disk holds only
+# whichever model the last sweep ended on).
 #
 # Environment:
 #   MODEL            model key to smoke          (default sd-turbo)
@@ -44,6 +51,9 @@
 #                                                 present, else the tracked
 #                                                 input_example/ files; see
 #                                                 scripts/inputs.sh)
+#   SMOKE_KLEIN=1    also smoke dltb-klein, both conditionings (off by default:
+#                    flux2-klein-4b is a ~15 GB download)
+#   KLEIN_MODEL      klein model for that leg    (default flux2-klein-4b)
 #   SKIP_GPU_CHECK=1 bypass the CUDA preflight
 #
 # Log: output/smoke_<UTC timestamp>.log
@@ -155,5 +165,35 @@ run uv run dltb-continuous --model "$MODEL" --input "$CLIP" \
     --output-dir "$OUT"
 check "$OUT/${clip_stem}_anchored/processed_anchored.mp4"
 
+# 5. dltb-klein, optional (SMOKE_KLEIN=1): both conditionings, klein-default
+#    settings (no strength; 4 steps), 2 source frames + 1 freeze-tail frame.
+#    klein run tags: stateful-a<blend> vs dualref, + _tailsfreeze1.
+if [[ "${SMOKE_KLEIN:-0}" == "1" ]]; then
+    KLEIN_MODEL="${KLEIN_MODEL:-flux2-klein-4b}"
+    log ""
+    log "smoke: klein leg (model=$KLEIN_MODEL, both conditionings)"
+    if [[ "$KLEIN_MODEL" == "flux2-klein-9b" && -z "${HF_TOKEN:-}" ]]; then
+        log "SMOKE FAIL: HF_TOKEN is not set (required for flux2-klein-9b)"
+        exit 1
+    fi
+
+    run uv run dltb-klein --model "$KLEIN_MODEL" --input "$CLIP" \
+        --mode stateful --conditioning blend --anchor-blend 0.1 --reproject \
+        --max-frames 2 --tail-frames 1 --tail-modes freeze \
+        --save-every 1 --output-dir "$OUT/klein-blend"
+    d="$OUT/klein-blend/${clip_stem}_stateful-a0.1_tailsfreeze1"
+    check "$d/processed_stateful.mp4"
+    check "$d/tail_freeze.mp4"
+
+    run uv run dltb-klein --model "$KLEIN_MODEL" --input "$CLIP" \
+        --mode stateful --conditioning dual-ref --ref-order state-first \
+        --reproject \
+        --max-frames 2 --tail-frames 1 --tail-modes freeze \
+        --save-every 1 --output-dir "$OUT/klein-dualref"
+    d="$OUT/klein-dualref/${clip_stem}_dualref_tailsfreeze1"
+    check "$d/processed_stateful.mp4"
+    check "$d/tail_freeze.mp4"
+fi
+
 log ""
-log "smoke: PASS -- all three tools produced their artifacts under $OUT"
+log "smoke: PASS -- all requested tools produced their artifacts under $OUT"

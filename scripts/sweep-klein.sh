@@ -16,8 +16,20 @@
 #            no ghosted blend for the editor to parse; state/anchor weighting
 #            is done by the model. BLEND is ignored; REF_ORDER picks [P,N]
 #            (state-first, default) or [N,P]. The prompt table switches to
-#            role-naming prompts ("image 2 is the current frame; ...", which
-#            assumes state-first order -- swap the roles if REF_ORDER=frame-first).
+#            role-naming prompts whose image indices are DERIVED from
+#            REF_ORDER ("image N is the current frame; keep the appearance of
+#            image M, ..."), so the instruction keeps its semantic roles under
+#            either order -- no manual role swapping.
+#
+# REPROJECT (stateful mode): 1 = warp the carried reference by source-frame
+#   optical flow before pairing (emulates engine motion vectors); 0 = pass
+#   both references clean. Under dual-ref the default is AB: every leg runs
+#   TWICE, once per setting -- the sweep itself is the reproject A/B (does
+#   warp alignment help, or do warp artifacts get amplified by an editor
+#   trained on clean references?). The run tags distinguish the variants
+#   (..._dualref vs ..._dualref-norepro), so nothing collides; both variants
+#   of a leg complete before the next leg starts, so partial results can be
+#   copied off the pod mid-sweep. Pin one variant with REPROJECT=1 or 0.
 #
 # What this sweep runs (all --mode stateful, one source pass per prompt):
 #
@@ -25,10 +37,12 @@
 #                            i.e. rising per-pass edit intensity. The freeze tail
 #                            shows whether the edit keeps compounding on static
 #                            input (the generative-ratchet / static-menu case).
-#   2. Semantic attractor  : a THEMATIC instruction (weathering). If klein works
-#                            as trained, the loop converges toward "maximally
-#                            weathered" instead of melting - directed attractor
-#                            vs. undirected collapse.
+#   2. Semantic attractor  : a THEMATIC instruction (coral overgrowth -- the
+#                            tracked example clip is an octopus in a coral
+#                            habitat). If klein works as trained, the loop
+#                            converges toward "maximally overgrown" instead
+#                            of melting - directed attractor vs. undirected
+#                            collapse.
 #   3. Steps probes        : the mild prompt at --num-inference-steps 2 / 8
 #                            (bracketing the klein card default of 4, which the
 #                            ladder legs already run). Steps are the one direct
@@ -49,6 +63,7 @@
 #   MODEL=flux2-klein-4b BLEND=0.2 scripts/sweep-klein.sh
 #   CONDITIONING=dual-ref scripts/sweep-klein.sh
 #   CONDITIONING=dual-ref REF_ORDER=frame-first scripts/sweep-klein.sh
+#   CONDITIONING=dual-ref REPROJECT=1 scripts/sweep-klein.sh   # pin one A/B variant
 #
 # Environment overrides:
 #   MODEL         klein model key          (default flux2-klein-9b; 4b is ungated)
@@ -66,6 +81,9 @@
 #   TAIL_MODES    tail scenario list       (default freeze; "freeze,free" etc.
 #                 NOTE: under dual-ref, free = single-reference regeneration
 #                 from state alone)
+#   REPROJECT     1 | 0 | ab               (default: ab under dual-ref = both
+#                 variants per leg, the A/B; 1 under blend. See the REPROJECT
+#                 paragraph above)
 #   SAVE_EVERY    save every Nth frame     (default 10)
 #   STEPS         steps-probe values       (default "2 8", bracketing the default 4;
 #                 empty = skip the probe)
@@ -109,19 +127,42 @@ case "$REF_ORDER" in
     *) echo "sweep-klein: REF_ORDER must be state-first or frame-first (got '$REF_ORDER')" >&2; exit 1 ;;
 esac
 
+# Reprojection: default AB under dual-ref (the sweep doubles as the A/B),
+# pinned on under blend (parity with scripts/sweep.sh).
+REPROJECT="${REPROJECT:-}"
+if [[ -z "$REPROJECT" ]]; then
+    if [[ "$CONDITIONING" == "dual-ref" ]]; then REPROJECT=ab; else REPROJECT=1; fi
+fi
+case "$REPROJECT" in
+    1|0|ab) ;;
+    *) echo "sweep-klein: REPROJECT must be 1, 0, or ab (got '$REPROJECT')" >&2; exit 1 ;;
+esac
+if [[ "$REPROJECT" == "ab" ]]; then REPROJECT_LIST="1 0"; else REPROJECT_LIST="$REPROJECT"; fi
+
 # ---------------------------------------------------------------- prompts ----
 # slug|prompt pairs. The slug becomes the output subdirectory; keep slugs short,
 # lowercase, hyphenated. Empty prompt = preservation baseline (no flag passed).
+# Prompts match the tracked example clip (octopus in a coral habitat; see
+# input_example/SOURCES.txt) -- point CLIP at your own and adjust OVERGROWTH.
+#
+# Role-naming for dual-ref: image indices are resolved from REF_ORDER, so
+# "image $FRAME_IMG is the current frame; keep the appearance of image
+# $STATE_IMG" keeps its semantic roles whether the list is [P, N] or [N, P].
+if [[ "$REF_ORDER" == "state-first" ]]; then
+    STATE_IMG=1
+    FRAME_IMG=2
+else
+    STATE_IMG=2
+    FRAME_IMG=1
+fi
+
 if [[ "$CONDITIONING" == "dual-ref" ]]; then
-    # Role-naming prompts. Phrasing assumes state-first order (image 1 = carried
-    # state/appearance reference, image 2 = current frame/content target);
-    # swap the roles if REF_ORDER=frame-first.
     PROMPT_TABLE=(
         "neutral|"
-        "enhance-slight|image 2 is the current frame; keep the appearance of image 1, slightly enhancing fine details"
-        "enhance-photo|image 2 is the current frame; keep the appearance of image 1, enhancing details and lighting to look photorealistic"
-        "enhance-dramatic|image 2 is the current frame; keep the appearance of image 1, dramatically enhancing every texture and surface detail"
-        "weathering|image 2 is the current frame; keep the appearance of image 1, adding more weathering, moss and water stains to the stone"
+        "enhance-slight|image ${FRAME_IMG} is the current frame; keep the appearance of image ${STATE_IMG}, slightly enhancing fine details"
+        "enhance-photo|image ${FRAME_IMG} is the current frame; keep the appearance of image ${STATE_IMG}, enhancing details and lighting to look photorealistic"
+        "enhance-dramatic|image ${FRAME_IMG} is the current frame; keep the appearance of image ${STATE_IMG}, dramatically enhancing every texture and surface detail"
+        "overgrowth|image ${FRAME_IMG} is the current frame; keep the appearance of image ${STATE_IMG}, adding more coral and marine growth over every surface"
     )
 else
     PROMPT_TABLE=(
@@ -129,14 +170,14 @@ else
         "enhance-slight|slightly enhance the fine details"
         "enhance-photo|enhance details and lighting, make it photorealistic"
         "enhance-dramatic|dramatically enhance every texture and surface detail"
-        "weathering|add more weathering, moss and water stains to the stone"
+        "overgrowth|add more coral and marine growth over every surface"
     )
 fi
 
 # Steps probes reuse the mild-enhancement prompt.
 PROBE_SLUG="enhance-slight"
 if [[ "$CONDITIONING" == "dual-ref" ]]; then
-    PROBE_PROMPT="image 2 is the current frame; keep the appearance of image 1, slightly enhancing fine details"
+    PROBE_PROMPT="image ${FRAME_IMG} is the current frame; keep the appearance of image ${STATE_IMG}, slightly enhancing fine details"
 else
     PROBE_PROMPT="slightly enhance the fine details"
 fi
@@ -190,31 +231,44 @@ run() {
     uv run dltb-klein "$@" 2>&1 | tee -a "$LOG"
 }
 
-log "sweep-klein: model=$MODEL clip=$CLIP conditioning=$CONDITIONING ref_order=$REF_ORDER blend=$BLEND"
+log "sweep-klein: model=$MODEL clip=$CLIP conditioning=$CONDITIONING ref_order=$REF_ORDER blend=$BLEND reproject=$REPROJECT"
+if [[ "$CONDITIONING" == "dual-ref" ]]; then
+    log "sweep-klein: dual-ref roles: image $STATE_IMG = carried state, image $FRAME_IMG = current frame"
+fi
 log "sweep-klein: max_frames=${MAX_FRAMES:-<all>} tail=${TAIL_FRAMES}x${TAIL_MODES} steps='${STEPS:-<none>}'"
 log "sweep-klein: log=$LOG"
 
 # ------------------------------------------------------- 1+2. prompt ladder ----
+# Inner loop over the reproject settings: both A/B variants of a leg finish
+# before the next leg starts (comparable pairs land on disk early).
 for entry in "${PROMPT_TABLE[@]}"; do
     slug="${entry%%|*}"
     prompt="${entry#*|}"
 
-    args=(${common[@]+"${common[@]}"} --output-dir "output/$MODEL/prompt-$slug")
-    if [[ -n "$prompt" ]]; then args+=(--prompt "$prompt"); fi
+    for R in $REPROJECT_LIST; do
+        args=(${common[@]+"${common[@]}"} $([[ "$R" == "1" ]] && echo --reproject || echo --no-reproject)
+              --output-dir "output/$MODEL/prompt-$slug")
+        if [[ -n "$prompt" ]]; then args+=(--prompt "$prompt"); fi
 
-    log ""
-    log "########## prompt '$slug': ${prompt:-<empty>} ##########"
-    run "${args[@]}" ${EXTRA_ARGS:+$EXTRA_ARGS}
+        log ""
+        log "########## prompt '$slug' [reproject=$R]: ${prompt:-<empty>} ##########"
+        run "${args[@]}" ${EXTRA_ARGS:+$EXTRA_ARGS}
+        log "sweep-klein: leg done: output/$MODEL/prompt-$slug (safe to copy off mid-sweep)"
+    done
 done
 
 # --------------------------------------------------------- 3. steps probe ----
 if [[ -n "${STEPS:-}" ]]; then
     for N in $STEPS; do
-        log ""
-        log "########## steps probe: '$PROBE_SLUG' @ num-inference-steps=$N ##########"
-        run ${common[@]+"${common[@]}"} \
-            --prompt "$PROBE_PROMPT" --num-inference-steps "$N" \
-            --output-dir "output/$MODEL/steps$N" ${EXTRA_ARGS:+$EXTRA_ARGS}
+        for R in $REPROJECT_LIST; do
+            log ""
+            log "########## steps probe: '$PROBE_SLUG' @ num-inference-steps=$N [reproject=$R] ##########"
+            run ${common[@]+"${common[@]}"} \
+                $([[ "$R" == "1" ]] && echo --reproject || echo --no-reproject) \
+                --prompt "$PROBE_PROMPT" --num-inference-steps "$N" \
+                --output-dir "output/$MODEL/steps$N" ${EXTRA_ARGS:+$EXTRA_ARGS}
+            log "sweep-klein: leg done: output/$MODEL/steps$N (safe to copy off mid-sweep)"
+        done
     done
 fi
 
