@@ -1,2 +1,2 @@
-input/test_512.png, input/test_768.png from https://picography.co/unleashed/ (CC0 license)
-video_raw.mp4 , video_croped.mp4 from https://www.pexels.com/video/underwater-octopus-in-coral-habitat-34857508/ (https://www.pexels.com/license/)
+test_512.png, test_768.png from https://picography.co/unleashed/ (CC0 license)
+video_raw.mp4, video_cropped.mp4 from https://www.pexels.com/video/underwater-octopus-in-coral-habitat-34857508/ (https://www.pexels.com/license/)

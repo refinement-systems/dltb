@@ -51,7 +51,10 @@
 #   MODELS="sd-turbo" MAX_FRAMES=20 TAIL_FRAMES=5 scripts/sweep.sh   # smoke test
 #
 # Environment overrides:
-#   CLIP              source video             (default input/video_cropped.mp4)
+#   CLIP              source video             (default: input/inputs.env if
+#                                               present, else the tracked
+#                                               input_example/video_cropped.mp4;
+#                                               see scripts/inputs.sh)
 #   MODELS            models to sweep          (default sd-turbo sdxl-turbo flux-schnell flux2-klein-9b)
 #   BLENDS            anchor-blend values      (default 0.1 0.3 0.5)
 #   BASELINE          baseline blend           (default 0.3)
@@ -74,7 +77,10 @@ set -euo pipefail
 
 cd "$(cd "$(dirname "${BASH_SOURCE[0]}")/.." && pwd)"
 
-CLIP="${CLIP:-input/video_cropped.mp4}"
+# Input files: env > input/inputs.env (user) > input_example/inputs.env.
+source scripts/inputs.sh
+
+CLIP="${CLIP:-input_example/video_cropped.mp4}"
 MODELS="${MODELS:-sd-turbo sdxl-turbo flux-schnell flux2-klein-9b}"
 BLENDS="${BLENDS:-0.1 0.3 0.5}"
 BASELINE="${BASELINE:-0.3}"

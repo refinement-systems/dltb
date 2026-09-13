@@ -35,6 +35,21 @@ bundle_file="${out_dir}/${top}.tar.gz"
 mkdir -p "${stage}"
 git ls-files -z | tar --no-xattrs --null -T - -cf - | tar -xf - -C "${stage}"
 
+# User inputs ride along: input/ is gitignored (tracked sample files live in
+# input_example/), but pod runs need it -- the one exception to tracked-files-
+# only. The untracked-file warning below cannot cover this, because `git
+# ls-files --others` never lists ignored paths, so the files are added
+# explicitly here. AppleDouble/DS_Store litter is skipped by name; .gitkeep is
+# already staged via git ls-files.
+user_inputs=()
+while IFS= read -r -d '' f; do
+    user_inputs+=("$f")
+done < <(find input -type f ! -name '._*' ! -name '.DS_Store' ! -name '.gitkeep' -print0 2>/dev/null)
+if [[ ${#user_inputs[@]} -gt 0 ]]; then
+    printf '%s\n' "${user_inputs[@]}" | tar --no-xattrs -T - -cf - | tar -xf - -C "${stage}"
+    printf 'bundle: added user input: %s\n' "${user_inputs[@]}"
+fi
+
 # Guard against staging something broken.
 for f in pyproject.toml uv.lock \
          src/dltb/models.py src/dltb/imaging.py src/dltb/output.py src/dltb/args.py \

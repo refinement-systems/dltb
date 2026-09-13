@@ -99,3 +99,13 @@ the saved frames, and the output video(s).
 
 Run `uv run <tool> --help` for all options (strength, steps, seed handling,
 resolution, prompt, save frequency, video FPS, ...).
+
+## Inputs
+
+Sample inputs (a test image and a short clip, provenance in `SOURCES.txt`)
+live in `input_example/`. The tools take any `--input` path, but the sweep
+and smoke scripts read theirs from a config: copy
+`input_example/inputs.env` to `input/inputs.env` (gitignored), point `IMG=`
+and `CLIP=` at your files under `input/`, and every script picks them up.
+An environment variable (`CLIP=... scripts/sweep.sh`) still wins over the
+file; see `scripts/inputs.sh`.

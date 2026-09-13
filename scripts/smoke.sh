@@ -15,10 +15,11 @@
 # smoke.sh -- post-deploy smoke test: one tiny run of every tool.
 #
 # Verifies the three console scripts and the cache helper against a real GPU
-# using the cheapest model, bundle-shipped inputs, and minimal budgets:
+# using the cheapest model, inputs from input/inputs.env (falling back to the
+# tracked input_example/ files), and minimal budgets:
 #
 #   0. scripts/hf-cache.sh status   (dltb.models import + cache probe)
-#   1. dltb-oneshot                 1 pass on input/test_512.png
+#   1. dltb-oneshot                 1 pass on the configured image
 #   2. dltb-iterate                 3 free-running passes + timelapse.mp4
 #   3. dltb-continuous stateful     3 reprojected source frames + 2 frames
 #                                   per tail (freeze, free, black)
@@ -39,8 +40,10 @@
 #
 # Environment:
 #   MODEL            model key to smoke          (default sd-turbo)
-#   IMG / CLIP       input files                 (default input/test_512.png,
-#                                                 input/video_cropped.mp4)
+#   IMG / CLIP       input files                 (default: input/inputs.env if
+#                                                 present, else the tracked
+#                                                 input_example/ files; see
+#                                                 scripts/inputs.sh)
 #   SKIP_GPU_CHECK=1 bypass the CUDA preflight
 #
 # Log: output/smoke_<UTC timestamp>.log
@@ -49,9 +52,12 @@ set -euo pipefail
 
 cd "$(cd "$(dirname "${BASH_SOURCE[0]}")/.." && pwd)"
 
+# Input files: env > input/inputs.env (user) > input_example/inputs.env.
+source scripts/inputs.sh
+
 MODEL="${MODEL:-sd-turbo}"
-IMG="${IMG:-input/test_512.png}"
-CLIP="${CLIP:-input/video_cropped.mp4}"
+IMG="${IMG:-input_example/test_512.png}"
+CLIP="${CLIP:-input_example/video_cropped.mp4}"
 
 # Keep these in sync with the expected-dir strings below (they mirror the
 # tools' run-tag encoding: stateful-a<blend>_tails<modes><frames>).

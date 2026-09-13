@@ -213,6 +213,14 @@ scripts/sweep-klein.sh    # klein prompt ladder + guidance probes (single model)
   re-loaded from disk per run. For a 32 GB model that load is ~15–30 s per run,
   times ~6 runs per model. This is inherent to `sweep.sh`'s per-run invocation.
 
+Inputs: the run scripts read their input files from `input/inputs.env`
+(`IMG=`, `CLIP=`); without one they fall back to the tracked examples in
+`input_example/` (provenance in `SOURCES.txt`). Your own files under `input/`
+ride in the bundle, so the usual flow is: drop files into `input/`, copy
+`input_example/inputs.env` to `input/inputs.env`, point it at them, `just
+bundle`, send. A one-off run with a different clip does not need the file:
+`CLIP=input/other.mp4 scripts/sweep.sh` (the environment beats the file).
+
 Smoke test after deploying a new bundle — one tiny run of every tool
 (`dltb-oneshot`, `dltb-iterate`, `dltb-continuous` both modes + tails, and the
 hf-cache helper), with artifact checks:
@@ -269,6 +277,10 @@ disk.
 
 ## 6. Getting data in and out
 
+- Input files do not need a separate transfer: `just bundle` packs the
+  gitignored `input/` directory into every bundle (tracked sample inputs live
+  in `input_example/`). Alternatively `runpodctl send`/`scp` files into
+  `input/` on the pod after extracting.
 - `scp` works with the connection from `runpodctl pod get <id>` / `ssh info`.
 - Or `runpodctl send <path>` locally and `runpodctl receive <code>` on the pod
   (install runpodctl there first).
@@ -306,7 +318,7 @@ disk.
 
 Runs one pass per model in a fresh process, reporting native fit, peak VRAM and
 whether `--offload` is needed. Run it after `uv sync`, from the extracted repo
-root (`input/test_768.png` ships in the bundle):
+root (`input_example/test_768.png` ships in every bundle):
 
 ```bash
 for m in sd-turbo sdxl-turbo flux2-klein-4b flux-schnell flux2-klein-9b; do
@@ -322,7 +334,7 @@ key, offload = os.environ["MODEL"], os.environ["OFFLOAD"] == "1"
 spec = MODELS[key]
 settings = PassSettings(num_inference_steps=1, strength=1.0)
 w, h = spec.default_width, spec.default_height
-src = prepare_frame(Image.open("input/test_768.png"), w, h)
+src = prepare_frame(Image.open("input_example/test_768.png"), w, h)
 
 t0 = time.time()
 try:

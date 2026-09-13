@@ -26,7 +26,7 @@ Dockerfile bakes it and rebuilds are only needed when it changes.
 ```bash
 uv sync                                      # set up env
 uv run dltb-oneshot --help                   # cheap local sanity check (no CUDA)
-uv run dltb-iterate --model sd-turbo --input input/test_512.png --iterations 3
+uv run dltb-iterate --model sd-turbo --input input_example/test_512.png --iterations 3
 just bundle                                  # stage pod-ready tarball in bundle/
 just image-build <registry>/<name>:<tag>     # build pod image (linux/amd64)
 just hf-status | hf-keep <model> | hf-clean  # HF cache management
@@ -40,6 +40,10 @@ DRY_RUN=1 scripts/sweep-klein.sh             # klein prompt ladder + steps probe
 scripts/smoke.sh                             # tiny run of every tool; needs GPU
 python3 src/dltb/analyze_drift.py <frames_dir>   # CPU-only drift metrics
 ```
+
+The drivers read their input files (`IMG`/`CLIP`) from `input/inputs.env`,
+falling back to the tracked `input_example/inputs.env`; environment variables
+win (see `scripts/inputs.sh`).
 
 There is **no test suite and no linter**. Verification ladder:
 1. `uv run <tool> --help` locally (catches import/arg breakage without CUDA).
@@ -104,8 +108,10 @@ Key invariants:
 - **Any tar creation needs `COPYFILE_DISABLE=1`** or macOS pollutes archives
   with `._*` AppleDouble members (`bundle.sh` does this + a python3 `tarfile`
   verification guard; never verify with `tar -t`, it hides them).
-- Bundles and images ship **tracked files only** — `git add` new scripts
-  before `just bundle`, or the pod silently misses them (both scripts warn).
+- Bundles ship **tracked files only**, with one exception: gitignored `input/`
+  (user inputs) is packed explicitly by `bundle.sh`. `git add` new scripts
+  before `just bundle`, or the pod silently misses them (both scripts warn);
+  image builds remain tracked-only.
 - `.gitignore` covers `output/`, `bundle/`, `._*`, `.DS_Store`, `.pi/` — keep
   generated artifacts out of git.
 

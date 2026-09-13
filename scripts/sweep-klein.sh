@@ -52,7 +52,10 @@
 #
 # Environment overrides:
 #   MODEL         klein model key          (default flux2-klein-9b; 4b is ungated)
-#   CLIP          source video             (default input/video_cropped.mp4)
+#   CLIP          source video             (default: input/inputs.env if
+#                                             present, else the tracked
+#                                             input_example/video_cropped.mp4;
+#                                             see scripts/inputs.sh)
 #   CONDITIONING  blend | dual-ref         (default blend)
 #   REF_ORDER     state-first | frame-first (default state-first; dual-ref only)
 #   BLEND         anchor-blend for all runs (default 0.1 - klein's active range
@@ -81,8 +84,11 @@ set -euo pipefail
 
 cd "$(cd "$(dirname "${BASH_SOURCE[0]}")/.." && pwd)"
 
+# Input files: env > input/inputs.env (user) > input_example/inputs.env.
+source scripts/inputs.sh
+
 MODEL="${MODEL:-flux2-klein-9b}"
-CLIP="${CLIP:-input/video_cropped.mp4}"
+CLIP="${CLIP:-input_example/video_cropped.mp4}"
 CONDITIONING="${CONDITIONING:-blend}"
 REF_ORDER="${REF_ORDER:-state-first}"
 BLEND="${BLEND:-0.1}"
