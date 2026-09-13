@@ -9,7 +9,7 @@ their own output: free-running image self-iteration, video pipeline simulation
 with carried state, and failure tails. Research/hobby code, not a product.
 Two domains exist:
 
-- **Local (macOS)**: editing, bundling (`just bundle`), image building. No GPU
+- **Local (macOS)**: editing, bundling (`just bundle`). No GPU
   needed for `--help`/arg checks (heavy imports are deliberately lazy).
 - **Pod (Runpod, linux/amd64)**: actual GPU runs via the bundle workflow.
 
@@ -20,15 +20,15 @@ and design sketches (e.g. klein dual-reference conditioning, not yet implemented
 ## Commands
 
 Package management is `uv` only (Python 3.13, CUDA-enabled torch comes via
-`uv sync`; there is no requirements.txt). Never edit `uv.lock` casually; the
-Dockerfile bakes it and rebuilds are only needed when it changes.
+`uv sync`; there is no requirements.txt). `uv.lock` ships in every bundle and
+is installed pod-side by `scripts/setup-pod.sh`, so lock changes ride the
+normal bundle workflow (there is no custom image to rebuild).
 
 ```bash
 uv sync                                      # set up env
 uv run dltb-oneshot --help                   # cheap local sanity check (no CUDA)
 uv run dltb-iterate --model sd-turbo --input input_example/test_512.png --iterations 3
 just bundle                                  # stage pod-ready tarball in bundle/
-just image-build <registry>/<name>:<tag>     # build pod image (linux/amd64)
 just hf-status | hf-keep <model> | hf-clean  # HF cache management
 ```
 
@@ -113,8 +113,8 @@ Key invariants:
   verification guard; never verify with `tar -t`, it hides them).
 - Bundles ship **tracked files only**, with one exception: gitignored `input/`
   (user inputs) is packed explicitly by `bundle.sh`. `git add` new scripts
-  before `just bundle`, or the pod silently misses them (both scripts warn);
-  image builds remain tracked-only.
+  before `just bundle`, or the pod silently misses them (the bundle script
+  warns).
 - `.gitignore` covers `output/`, `bundle/`, `._*`, `.DS_Store`, `.pi/` — keep
   generated artifacts out of git.
 
@@ -124,13 +124,17 @@ Key invariants:
 just bundle                     # local
 runpodctl send bundle/imgiter-<stamp>.tar.gz
 # on pod:
-cd /workspace && tar xzf imgiter-<stamp>.tar.gz && cd imgiter-<stamp>
-uv sync --frozen                # re-points baked venv (/opt/imgiter/.venv) at new code
+cd /workspace && mkdir -p imgiter
+tar xzf imgiter-<stamp>.tar.gz --strip-components=1 -C imgiter && cd imgiter
+scripts/setup-pod.sh            # pinned uv + uv sync --frozen (re-run per bundle)
 scripts/smoke.sh && scripts/sweep.sh
 ```
 
-- Pod image (`image/Dockerfile`) = runpod/base + uv-locked deps; rebuild only
-  when `uv.lock` changes. Code ships via bundles.
+- Pod image = stock `runpod/base` pinned by digest — no custom image: Runpod
+  bills from the start of the image pull, so baking deps buys nothing
+  (NOTES.md, 2026-09-13). `scripts/setup-pod.sh` installs uv 0.12.13 + the
+  locked deps on the pod; bundles extract into the fixed dir
+  `/workspace/imgiter` so `.venv` and outputs survive new bundle extracts.
 - `just` and `runpodctl` are NOT in the pod image — use `scripts/*.sh` directly.
 - 48 GB VRAM recommended; `--offload` for the two big models on smaller cards.
 - Container disk is **ephemeral on stop AND restart** — copy `output/` out

@@ -373,3 +373,43 @@ table so the price/compute trade is explicit rather than implicit. The
 appendix VRAM probe is the cheap way to get peak VRAM; a fixed
 `--max-frames` run gives the throughput denominator.
 
+
+## Pod image retired: stock runpod/base + `scripts/setup-pod.sh` (2026-09-13)
+
+**Decision:** stop building `refinementsystems/imgiter`. Pods run the stock
+`runpod/base:1.3.0-rc.164-ubuntu2404`, pinned by the same digest the custom
+image was built `FROM`; `scripts/setup-pod.sh` (new, ships in every bundle)
+installs uv 0.12.13 into `/usr/local/bin` and runs `uv sync --frozen`.
+
+**Why:** Runpod starts billing when the container image pull starts. The
+~12 GB custom image was justified as skipping the multi-GB `uv sync` on boot,
+but it instead added a billed ~12 GB Docker Hub pull (often throttled) — the
+~6 GB PyPI sync it skipped is cheaper, faster, and paid only when the lock
+actually changes. Secondary: every `uv.lock` change forced an emulated
+linux/amd64 rebuild + Docker Hub push + template digest re-pin; now lock
+changes ride the normal bundle workflow. For scale, both sides are dwarfed by
+the ~87.5 GB of HF model downloads every fresh pod pays anyway (container
+disk is wiped on stop and restart), so the whole optimization was noise.
+
+**Mechanics that replaced the baked venv:**
+
+- Bundles extract into a **fixed dir** (`/workspace/imgiter`,
+  `--strip-components=1`), so the project `.venv` (uv's default location,
+  created by `uv sync`) and `output/` survive new bundle extracts; re-running
+  `scripts/setup-pod.sh` after each extract re-points the editable install
+  (seconds when `uv.lock` is unchanged). This replaces the image's
+  `UV_PROJECT_ENVIRONMENT=/opt/imgiter/.venv` env var, which cannot be
+  provided container-wide without a custom image — and without it, stamp-dir
+  extraction would re-download the stack once per bundle.
+- `scripts/inputs.sh` (sourced by every driver) now fails fast when `.venv`
+  is missing, so `uv run` can never silently sync a fresh multi-GB venv
+  mid-sweep. `DRY_RUN=1` previews bypass the guard.
+- uv 0.12.13 is pinned to match the lockfile producer and the `uv_build`
+  backend constraint (`>=0.12.7,<0.13.0`); installed from the GitHub release
+  tarball (no `curl | sh`).
+
+**Not changed:** the pod template (id `04u1mmp8nf`) keeps its disk/env/ports;
+its image reference needs a one-time `runpodctl template update --image`
+re-point (README_RUNPOD.md §3). The old image tags stay on Docker Hub.
+`hf-cache.sh`'s `HF_HOME` guard and the SSH/Jupyter behavior are base-image
+features, unaffected.

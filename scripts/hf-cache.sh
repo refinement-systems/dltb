@@ -19,8 +19,8 @@
 #
 # Model keys are the same values as the tools' --model flag; the key -> repo
 # id mapping is read from dltb.models.MODELS so it cannot drift from the
-# tools. The command is run through `uv run --frozen`, i.e. the baked venv on
-# a pod.
+# tools. The command is run through `uv run --frozen`, i.e. the project
+# `.venv` on a pod (created by `scripts/setup-pod.sh`).
 #
 # Usage:
 #   scripts/hf-cache.sh status              # sizes per repo, filesystem free

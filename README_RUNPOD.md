@@ -1,8 +1,11 @@
 # imgiter on Runpod — runbook
 
-Practical notes from commissioning and testing the `imgiter` pod template
-(`refinementsystems/imgiter`, tag `0.1.0`). Everything here was measured on a
-real pod; prices and availability drift, so re-check the console.
+Practical notes from commissioning and running `imgiter` pods. Everything
+here was measured on real pods; prices and availability drift, so re-check
+the console. Pods run the stock `runpod/base` image pinned by digest (§3);
+the dependency-baked custom image used for the first commissioning was
+retired 2026-09-13 — Runpod bills from the start of the image pull, so it
+cost more than the `uv sync` it skipped (NOTES.md).
 
 ## TL;DR
 
@@ -21,9 +24,10 @@ git add scripts/hf-cache.sh scripts/sweep.sh Justfile README_RUNPOD.md  # untrac
 just bundle
 
 # pod
-cd /workspace && tar xzf imgiter-<stamp>.tar.gz && cd imgiter-<stamp>
-uv sync --frozen
-scripts/smoke.sh                 # post-deploy check (all three tools)
+cd /workspace && mkdir -p imgiter
+tar xzf imgiter-<stamp>.tar.gz --strip-components=1 -C imgiter && cd imgiter
+scripts/setup-pod.sh             # pinned uv + uv sync --frozen (once per pod; re-run per bundle)
+scripts/smoke.sh                 # post-deploy check (all tools)
 scripts/sweep.sh
 ```
 
@@ -81,18 +85,22 @@ the number of frames, not steps.
 
 ```
 /workspace                          <- container disk (ephemeral), 150 GB
-  imgiter-<stamp>/                  <- extracted bundle (code only; no .venv)
+  imgiter/                          <- extracted bundle (fixed dir, reused across bundles)
+    .venv/                          <- locked deps (scripts/setup-pod.sh; ~7 GB)
     output/                         <- results, sweep logs
   .cache/huggingface/               <- HF_HOME (base image default)
     hub/models--<org>--<name>/      <- model weights
     xet/                            <- xet chunk cache, hard-capped at 10 GB
+  .cache/uv/                        <- UV_CACHE_DIR (base image default): wheel cache
 ```
 
-Dependencies live in the image at `/opt/imgiter/.venv`
-(`UV_PROJECT_ENVIRONMENT`), not in the extracted tree.
+Dependencies live in `/workspace/imgiter/.venv`, created by
+`scripts/setup-pod.sh` (it installs uv 0.12.13 and provisions CPython 3.13 —
+`runpod/base` ships neither). The fixed extraction dir keeps `.venv` and
+`output/` alive across bundle updates.
 
-The image itself does **not** count against the container disk: `df /workspace`
-showed ~85 MB used with the 12 GB image present.
+The image itself does **not** count against the container disk (`df
+/workspace` showed ~85 MB used next to a 12 GB image).
 
 ### Measured cache sizes (real downloads, not repo totals)
 
@@ -155,12 +163,14 @@ The `imgiter` template is **private and stays that way on purpose**: it wires
 account-internal secrets by name (`{{ RUNPOD_SECRET_HF_TOKEN }}`), and other
 users have no reason to use the same secret names (no leak risk either way —
 secrets resolve per account — but a public template would simply not work for
-others). The **image** is public (`refinementsystems/imgiter` on Docker Hub),
-so anyone can run the stack without the template:
+others). The image is the **stock** `runpod/base`, pinned by digest — the
+same base the retired custom image was built `FROM`, so the pod plumbing
+(`/start.sh` sshd, `/workspace` cache conventions) is unchanged. Anyone can
+run the stack without the template:
 
 ```bash
 runpodctl pod create \
-  --image refinementsystems/imgiter:0.1.0 \
+  --image runpod/base:1.3.0-rc.164-ubuntu2404@sha256:95357957d7660542b37226fb31863c4510502006f2018efe23e2869137daf000 \
   --gpu-id "NVIDIA RTX 6000 Ada" \
   --container-disk-in-gb 150 \
   --ports "22/tcp" \
@@ -173,8 +183,8 @@ of this section documents the author's template as the reference
 configuration.
 
 Template `imgiter` (`04u1mmp8nf`): container disk 150 GB, no volume, env
-`HF_TOKEN={{ RUNPOD_SECRET_HF_TOKEN }}`, port `22/tcp`, image pinned by digest
-`sha256:68d934…` (tag `0.1.0`).
+`HF_TOKEN={{ RUNPOD_SECRET_HF_TOKEN }}`, port `22/tcp`, image = the
+`runpod/base` digest above.
 
 ```bash
 runpodctl pod create \
@@ -201,6 +211,7 @@ the template if you need to change it):
 
 ```bash
 runpodctl template update 04u1mmp8nf \
+  --image runpod/base:1.3.0-rc.164-ubuntu2404@sha256:95357957d7660542b37226fb31863c4510502006f2018efe23e2869137daf000 \
   --container-disk-in-gb 150 \
   --env '{"HF_TOKEN":"{{ RUNPOD_SECRET_HF_TOKEN }}"}'
 ```
@@ -268,17 +279,22 @@ has the URL.
 
 ```bash
 cd /workspace
-tar xzf imgiter-<stamp>.tar.gz
-cd imgiter-<stamp>
-uv sync --frozen          # re-points the editable install from /opt/imgiter to this tree
+mkdir -p imgiter               # fixed dir: .venv and output/ survive bundle updates
+tar xzf imgiter-<stamp>.tar.gz --strip-components=1 -C imgiter
+cd imgiter
+scripts/setup-pod.sh           # uv 0.12.13 + uv sync --frozen; re-run after every bundle
 
 scripts/sweep.sh          # full sweep; add OFFLOAD=1 on <48 GB GPUs for the big models
 scripts/sweep-klein.sh    # klein prompt ladder + steps probes + reproject A/B (single model)
 scripts/sweep-prompt.sh   # free-running prompt (x strength) sweep on one image
 ```
 
-- Dependencies are baked into the image at `/opt/imgiter/.venv`
-  (`UV_PROJECT_ENVIRONMENT`), so `uv sync` only rebuilds the project itself.
+- Dependencies install into `imgiter/.venv` on first `scripts/setup-pod.sh`
+  (~6 GB of wheels + CPython 3.13, a couple of minutes from PyPI). Re-running
+  it after a new bundle extract re-points the editable install — seconds when
+  `uv.lock` is unchanged. Extracting over the fixed dir can leave files that
+  were deleted from the repo lingering in the tree; harmless, or wipe the
+  tree (`.venv` included) to fully reset.
 - **`just` is not installed in the image** — call `scripts/*.sh` directly, or use
   `uv run dltb-oneshot|dltb-iterate|dltb-continuous --help` for individual runs.
 - `runpodctl` is not in the image either; install it on the pod
@@ -389,7 +405,8 @@ disk.
    the template.
 4. **Volume-size changes are impossible via `runpodctl template update`**; only
    the console or a template recreate.
-5. **`just` and `runpodctl` are absent from the image.** Use the shell scripts.
+5. **`just`, `runpodctl` and `uv` are absent from the image.** Use the shell
+   scripts; `scripts/setup-pod.sh` installs uv (pinned 0.12.13) once per pod.
 6. `--num-inference-steps 4 --strength 0.4` (the sweep defaults) results in
    **1 actual denoise step** for `sd-turbo` / `sdxl-turbo` / `flux-schnell`
    (`int(4 × 0.4)`); the `flux2-klein-*` models run all 4 steps
@@ -400,14 +417,19 @@ disk.
    so it is not corruption; treat per-model peak as ≤ ~35 GB either way.
 8. Cost example: RTX 5090 at $0.99/hr, whole disk test (image pull + ~95 GB of
    downloads + a few runs) was well under an hour.
-9. Downloads from Hugging Face have no egress cost; the only cost is GPU time
-   while downloading.
+9. Pod billing starts when the **image pull** starts — a key reason the custom
+   baked-deps image was retired for stock `runpod/base` + `setup-pod.sh`
+   (2026-09-13, NOTES.md): a billed ~12 GB Docker Hub pull to skip a ~6 GB
+   PyPI sync is a net loss, and fresh pods re-download wheels and models
+   anyway (container disk is wiped on stop and restart).
+10. Downloads from Hugging Face have no egress cost; the only cost is GPU time
+    while downloading.
 
 ## Appendix: quick VRAM probe
 
 Runs one pass per model in a fresh process, reporting native fit, peak VRAM and
-whether `--offload` is needed. Run it after `uv sync`, from the extracted repo
-root (`input_example/test_768.png` ships in every bundle):
+whether `--offload` is needed. Run it after `scripts/setup-pod.sh`, from the
+extracted repo root (`input_example/test_768.png` ships in every bundle):
 
 ```bash
 for m in sd-turbo sdxl-turbo flux2-klein-4b flux-schnell flux2-klein-9b; do

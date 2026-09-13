@@ -9,11 +9,6 @@ bundle:
 clean:
     rm -rf bundle/*
 
-# Build the pod environment image (deps + venv baked, code still ships via `bundle`).
-# The tag is your Docker Hub push target, e.g.: just image-build <user>/imgiter:1
-image-build tag:
-    scripts/image-build.sh {{tag}}
-
 # Inspect the HuggingFace model cache (per-repo sizes, filesystem free)
 hf-status:
     scripts/hf-cache.sh status

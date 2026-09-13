@@ -31,6 +31,15 @@
 # Callers still apply their own ${VAR:-...} fallbacks after sourcing, so a
 # missing conf file only costs the built-in defaults.
 
+# Guard: every driver invokes the tools via `uv run`, which would silently
+# create and sync a fresh project venv (~6 GB on a pod) if none exists yet.
+# Fail fast instead; DRY_RUN=1 previews bypass this.
+if [[ "${DRY_RUN:-0}" != "1" && ! -d .venv ]]; then
+    echo "inputs: no .venv in ${PWD} -- run scripts/setup-pod.sh first" >&2
+    echo "        (locally: uv sync)" >&2
+    exit 1
+fi
+
 if [[ -f input/inputs.env ]]; then
     source input/inputs.env
 elif [[ -f input_example/inputs.env ]]; then
