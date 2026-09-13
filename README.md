@@ -1,7 +1,5 @@
 # DLTB - Deep Learning Tripping Balls
 
-Warning: everything in this repo is vibecoded slop, proceed with caution.
-
 This is an attempt to have DLSS5 at home, but weirder.
 
 Trying to test what happens when a generative loop is fed its own output,
@@ -10,7 +8,7 @@ does instead.
 
 ## Tools
 
-Three scripts share the library code in `src/dltb/` (`models`, `imaging`,
+The console scripts share the library code in `src/dltb/` (`models`, `imaging`,
 `output`, `args`):
 
 - `dltb-oneshot` — single image, single model pass: the anchored regime
@@ -29,9 +27,17 @@ Three scripts share the library code in `src/dltb/` (`models`, `imaging`,
   reference-image editor: no `--strength`, per-pass change scales ~linearly
   with the blend (default `0.1`, far below the img2img models), and the prompt
   is the de-facto per-pass edit-strength knob (`--num-inference-steps` is the
-  other). `scripts/sweep-klein.sh` walks its prompt ladder and steps probes
+  other). `--conditioning dual-ref` passes the carried state and fresh frame
+  as two separate clean reference images (`[P, N]`, or `[N, P]` with
+  `--ref-order frame-first`) instead of one pixel blend; `scripts/sweep-klein.sh`
+  walks its prompt ladder and steps probes under either conditioning
   (guidance is inert for klein — CFG is disabled and there is no guidance
   embedding in the distilled checkpoints).
+- `dltb-assemble` — CPU-only local post-processing: encode mp4s from a run's
+  saved PNG frames (main loop + per-tail-mode videos). Complements the split
+  workflow: frames are computed on a rented GPU pod, the run directory is
+  copied home, and videos are (re-)assembled locally — no torch, no CUDA
+  (`python3 src/dltb/assemble.py` also works, like `analyze_drift.py`).
 
 ## Models
 
@@ -78,6 +84,10 @@ uv run dltb-continuous --model flux-schnell --input clip.mp4 --mode stateful \
 # Klein editors: prompt is the per-pass edit-strength knob
 uv run dltb-klein --input clip.mp4 --prompt "slightly enhance the fine details" \
     --tail-frames 60 --tail-modes freeze
+
+# Klein dual-reference conditioning: [state, fresh frame] as two clean refs
+uv run dltb-klein --input clip.mp4 --conditioning dual-ref \
+    --prompt "image 2 is the current frame; keep the appearance of image 1"
 
 # FLUX.1-schnell, CPU-offloaded to fit a 24 GB card
 uv run dltb-iterate --model flux-schnell --input menu.png --offload
