@@ -19,6 +19,7 @@ wheels/
 # Packed bundles
 bundle/*
 
-# Downloaded files
+# Input/output files
+input/*
 output/*
 
