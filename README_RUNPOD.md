@@ -149,6 +149,29 @@ aws s3 cp --recursive \
 
 ## 3. Pod setup
 
+### The template is private — bring your own
+
+The `imgiter` template is **private and stays that way on purpose**: it wires
+account-internal secrets by name (`{{ RUNPOD_SECRET_HF_TOKEN }}`), and other
+users have no reason to use the same secret names (no leak risk either way —
+secrets resolve per account — but a public template would simply not work for
+others). The **image** is public (`refinementsystems/imgiter` on Docker Hub),
+so anyone can run the stack without the template:
+
+```bash
+runpodctl pod create \
+  --image refinementsystems/imgiter:0.1.0 \
+  --gpu-id "NVIDIA RTX 6000 Ada" \
+  --container-disk-in-gb 150 \
+  --ports "22/tcp" \
+  --env '{"HF_TOKEN":"<your-token>"}' \
+  --name imgiter --wait
+```
+
+…or recreate that as a private template of your own in the console. The rest
+of this section documents the author's template as the reference
+configuration.
+
 Template `imgiter` (`04u1mmp8nf`): container disk 150 GB, no volume, env
 `HF_TOKEN={{ RUNPOD_SECRET_HF_TOKEN }}`, port `22/tcp`, image pinned by digest
 `sha256:68d934…` (tag `0.1.0`).
@@ -193,6 +216,53 @@ echo "HF_TOKEN prefix=${HF_TOKEN:0:3} len=${#HF_TOKEN}"   # expect hf_ and ~37
 
 If it prints `{{...}}`, the secret did not resolve — `export HF_TOKEN=hf_...`
 for the session.
+
+### SSH access (direct ssh / rsync)
+
+The image needs **no manual sshd setup**: the base image's `/start.sh`
+generates host keys, writes `$PUBLIC_KEY` into `/root/.ssh/authorized_keys`
+and starts sshd — but only when `PUBLIC_KEY` is non-empty, and Runpod injects
+that variable from the **account's registered SSH keys at pod start**. A pod
+that boots with none registered comes up without sshd (the console web
+terminal and the `ssh <pod-id>-<token>@ssh.runpod.io` gateway still work; the
+gateway requires a PTY). That, not an image defect, was the cause of the
+2026-09-12 "connection refused" session in NOTES.md.
+
+One-time setup — keys added after boot are ignored until a restart:
+
+```bash
+runpodctl ssh add-key --key-file ~/.ssh/id_ed25519.pub
+runpodctl ssh list-keys                     # confirm it's on the account
+```
+
+Then `pod stop` / `pod start` (or create a new pod). Every subsequent start
+brings sshd up automatically — nothing to redo manually:
+
+```bash
+runpodctl ssh info <pod-id>                 # ip:port + paste-ready ssh_command
+rsync -P -e "ssh -i <key> -p <port>" ./dir/ root@<ip>:/workspace/dir/   # ~14 MB/s measured
+```
+
+Caveat: after a stop→start the external port is reassigned, and the first
+`ssh info` can report a stale port for ~90 s — retry until a connection
+succeeds.
+
+### Jupyter Lab (optional, untested)
+
+`/start.sh` also auto-starts Jupyter Lab on port 8888 (preferred dir
+`/workspace`) whenever `JUPYTER_PASSWORD` is set in the pod env — zero image
+change. Potentially handy for browsing `output/` frames and timelapses on a
+running pod. **Not yet exercised on this pod**; to try it, set
+
+```text
+JUPYTER_PASSWORD=<token>
+```
+
+in the pod env and expose `8888/http` (template edit, or
+`--ports "22/tcp,8888/http"` on create). Runpod then serves it at
+`https://<pod-id>-8888.proxy.runpod.net`; mark the port **secure** in the
+console so it requires your Runpod login instead of being open to anyone who
+has the URL.
 
 ## 4. On-pod workflow
 
@@ -298,7 +368,9 @@ disk.
   gitignored `input/` directory into every bundle (tracked sample inputs live
   in `input_example/`). Alternatively `runpodctl send`/`scp` files into
   `input/` on the pod after extracting.
-- `scp` works with the connection from `runpodctl pod get <id>` / `ssh info`.
+- `scp`/`rsync` work over the direct-SSH mapping from `runpodctl ssh info`
+  (see [SSH access](#3-pod-setup) — register an account key once; rsync
+  measured ~14 MB/s).
 - Or `runpodctl send <path>` locally and `runpodctl receive <code>` on the pod
   (install runpodctl there first).
 - Outputs live under `output/<model>/<stem>_<mode-tag>/`.

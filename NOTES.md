@@ -2,7 +2,7 @@
 
 Loose ends and follow-ups for imgiter.
 
-## Pod SSH: sshd is NOT running by default (2026-09-12)
+## Pod SSH: sshd not running by default (2026-09-12; root cause found & solved 2026-09-12)
 
 **Symptom:** every non-interactive access path fails while the pod itself is
 healthy — `runpodctl ssh info` ip:port gives *connection refused*, `exec`
@@ -13,26 +13,51 @@ Only the console **web terminal** and the `ssh <pod-id>-<token>@ssh.runpod.io`
 gateway (PTY required — plain `ssh host cmd` is rejected with "Your SSH client
 doesn't support PTY"; scripted use needs a pty wrapper + fed commands) work.
 
-**Cause:** the pod image does not start sshd, and ships without host keys.
+**Cause (corrected — the original "the pod image does not start sshd" was
+wrong):** the base image's `/start.sh` *does* set up sshd — host keys,
+`authorized_keys`, `service ssh start` — but its `setup_ssh` block is gated
+on `$PUBLIC_KEY`, which Runpod injects from the **account's registered SSH
+keys at pod start**. This pod had booted with none registered, so `PUBLIC_KEY`
+was empty and the whole block no-opped. Not an image defect; baking keys
+into the image was considered and rejected (README_DEFERRED.md).
 
-**Fix (on the pod, via web terminal or the gateway):**
+**Fix (permanent):** register a key once, then restart the pod. Every
+subsequent start brings sshd up automatically — nothing to redo manually
+(procedure: README_RUNPOD.md §3, "SSH access"):
+
+```bash
+runpodctl ssh add-key --key-file ~/.ssh/id_ed25519.pub
+runpodctl ssh list-keys                     # confirm it's on the account
+# then pod stop && pod start — keys added after boot are ignored until restart
+```
+
+**Manual fallback** (still valid, for a pod you cannot restart mid-run;
+ephemeral — redo after every pod start):
 
 ```bash
 ssh-keygen -A          # generates /etc/ssh/ssh_host_* keys
 service ssh start      # "no hostkeys available -- exiting" without the line above
 ss -tlnp | grep :22
+echo '<pubkey line>' >> /root/.ssh/authorized_keys   # else publickey auth fails
 ```
 
-Then the `runpodctl ssh info` ip:port mapping answers. Second gotcha: the
-gateway authenticates against the *Runpod account*, the in-container sshd
-against `/root/.ssh/authorized_keys` — append the pubkey you connect with
-(`echo '<pubkey line>' >> /root/.ssh/authorized_keys`) or publickey auth
-still fails. With that, plain `rsync -P -e "ssh -i <key> -p <port>"` works
-and is the preferred bulk-transfer path (measured ~14 MB/s).
+**Troubleshooting notes worth keeping:**
 
-**All of it is ephemeral** — host keys, authorized_keys, and the running sshd
-live on the container disk and vanish on stop/restart/recreate. Redo the
-two-liner after every pod start.
+- The **gateway** authenticates against the *Runpod account*; the in-container
+  sshd against `/root/.ssh/authorized_keys` — two separate trust paths, each
+  can break independently. A pod reachable via gateway but refused on the
+  ip:port mapping means in-container sshd is down (this incident); the
+  reverse (ip:port OK, gateway rejected) would point at the account side.
+- `ssh <pod-id>-<token>@ssh.runpod.io` needs a PTY — scripted use requires a
+  pty wrapper with fed commands; prefer the ip:port mapping for automation.
+- Host keys, authorized_keys and the running sshd live on the ephemeral
+  container disk and vanish on stop/restart/recreate. With the account key
+  registered, `/start.sh` regenerates all of it at every boot.
+- After a stop→start the external port is **reassigned**, and the first
+  `runpodctl ssh info` can report a stale port for ~90 s — retry until a
+  connection succeeds before assuming sshd is down.
+- With sshd reachable, plain `rsync -P -e "ssh -i <key> -p <port>"` works and
+  is the preferred bulk-transfer path (measured ~14 MB/s).
 
 ## macOS `._*` AppleDouble files in pod bundles
 
@@ -190,7 +215,7 @@ cross-model comparison. No conclusion yet on whether the model is suitable at
 all, or whether a different conditioning/topology is needed (`flux2-klein-9b`
 is a reference-image editor: no `--strength`, full 4-step regeneration).
 
-2026-09-21: that topology redesign is now in the tree as `dltb-klein` +
+2026-09-12: that topology redesign is now in the tree as `dltb-klein` +
 `scripts/sweep-klein.sh` (prompt-as-strength ladder, guidance probes).
 Later the same day the guidance-probe leg turned out to be inert for klein —
 see the next section.
